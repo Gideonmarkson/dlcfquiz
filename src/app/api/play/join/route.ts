@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
-import { checkRateLimit } from '@/lib/rateLimiter';
 import { broadcastToRoom } from '@/lib/supabase/broadcast';
 import { AcademicLevel } from '@/types/quiz';
 import {
@@ -11,20 +10,9 @@ import {
 } from '@/lib/mockDb';
 import { isNeonAvailable, joinPlayerInNeon } from '@/lib/db/neonService';
 
-const RATE_LIMIT_PER_MIN = parseInt(process.env.JOIN_RATE_LIMIT_PER_MIN || '5000', 10);
-
 export async function POST(req: NextRequest) {
   try {
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'anonymous';
-    // Generous rate limit (5,000/min) ensures 200+ students on the same fellowship Wi-Fi router join smoothly
-    const rateCheck = checkRateLimit(`join:${ip}`, RATE_LIMIT_PER_MIN, 60000);
-    if (!rateCheck.allowed) {
-      return NextResponse.json(
-        { error: 'Connection busy. Please tap join again in a few seconds.' },
-        { status: 429 }
-      );
-    }
-
+    // Uncapped joining: 200+ students in fellowship hall on shared Wi-Fi can all join without restriction
     const body = await req.json();
     const { pin, nickname, name, academicLevel, existingToken } = body as {
       pin?: string;
@@ -39,9 +27,9 @@ export async function POST(req: NextRequest) {
     }
 
     const cleanNick = (name || nickname || '').trim();
-    if (cleanNick.length < 2 || cleanNick.length > 20) {
+    if (cleanNick.length < 2 || cleanNick.length > 35) {
       return NextResponse.json(
-        { error: 'Name must be between 2 and 20 characters.' },
+        { error: 'Name must be between 2 and 35 characters.' },
         { status: 400 }
       );
     }
@@ -85,7 +73,7 @@ export async function POST(req: NextRequest) {
             },
             { status: joinResult.statusCode }
           );
-        } else if (joinResult.error) {
+        } else if (joinResult.error && joinResult.statusCode !== 404) {
           return NextResponse.json(
             {
               error: joinResult.error,

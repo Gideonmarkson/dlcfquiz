@@ -101,7 +101,8 @@ export async function createRoomInNeon(params: {
 // --- 2. GET ROOM BY PIN ---
 export async function getRoomByPinFromNeon(pin: string): Promise<RoomRecord | null> {
   const sql = getSql();
-  const rows = await sql`SELECT * FROM public.rooms WHERE pin = ${pin} LIMIT 1`;
+  const cleanPin = pin.trim();
+  const rows = await sql`SELECT * FROM public.rooms WHERE TRIM(pin) = ${cleanPin} LIMIT 1`;
   if (rows.length === 0) return null;
   return rows[0] as RoomRecord;
 }
@@ -131,9 +132,10 @@ export async function joinPlayerInNeon(params: {
 }> {
   const sql = getSql();
 
-  // 1. Get room
+  // 1. Get room (match trimmed pin)
+  const cleanPin = params.pin.trim();
   const roomRows = await sql`
-    SELECT id, pin, status, current_question_index FROM public.rooms WHERE pin = ${params.pin}
+    SELECT id, pin, status, current_question_index FROM public.rooms WHERE TRIM(pin) = ${cleanPin}
   `;
   if (roomRows.length === 0) {
     return { success: false, error: 'Room PIN not found.', statusCode: 404 };
@@ -160,24 +162,28 @@ export async function joinPlayerInNeon(params: {
     }
   }
 
-  // 3. Check duplicate nickname
-  const cleanNick = params.nickname.trim();
-  const normalized = cleanNick.toLowerCase();
+  // 3. Auto-disambiguate duplicate names so students NEVER get blocked from joining
+  let assignedNick = params.nickname.trim();
+  const normalized = assignedNick.toLowerCase();
   const dupRows = await sql`
     SELECT id, nickname FROM public.players WHERE room_id = ${room.id} AND LOWER(TRIM(nickname)) = ${normalized}
   `;
   if (dupRows.length > 0) {
-    return {
-      success: false,
-      error: `The name '${cleanNick}' is already taken in this room.`,
-      statusCode: 409,
-    };
+    const withLevel = `${assignedNick} (${params.academicLevel})`;
+    const checkWithLevel = await sql`
+      SELECT id FROM public.players WHERE room_id = ${room.id} AND LOWER(TRIM(nickname)) = ${withLevel.toLowerCase()}
+    `;
+    if (checkWithLevel.length === 0) {
+      assignedNick = withLevel;
+    } else {
+      assignedNick = `${assignedNick} #${dupRows.length + 1}`;
+    }
   }
 
   // 4. Insert new player
   const insertRows = await sql`
     INSERT INTO public.players (room_id, nickname, academic_level)
-    VALUES (${room.id}, ${cleanNick}, ${params.academicLevel})
+    VALUES (${room.id}, ${assignedNick}, ${params.academicLevel})
     RETURNING *
   `;
   const newPlayer = insertRows[0] as PlayerRecord;
@@ -213,7 +219,7 @@ export async function submitAnswerInNeon(params: {
 
   const rows = await sql`
     SELECT * FROM public.submit_player_answer(
-      ${params.pin},
+      ${params.pin.trim()},
       ${params.playerToken}::uuid,
       ${params.questionId}::uuid,
       ${params.selectedOption}::smallint
@@ -255,7 +261,8 @@ export async function transitionRoomInNeon(params: {
   const sql = getSql();
 
   // 1. Fetch room
-  const roomRows = await sql`SELECT * FROM public.rooms WHERE pin = ${params.pin}`;
+  const cleanPin = params.pin.trim();
+  const roomRows = await sql`SELECT * FROM public.rooms WHERE TRIM(pin) = ${cleanPin}`;
   if (roomRows.length === 0) {
     return { success: false, error: 'Room not found', statusCode: 404 };
   }
@@ -408,7 +415,8 @@ export async function transitionRoomInNeon(params: {
 export async function getHostRoomSnapshotFromNeon(pin: string) {
   const sql = getSql();
 
-  const roomRows = await sql`SELECT * FROM public.rooms WHERE pin = ${pin}`;
+  const cleanPin = pin.trim();
+  const roomRows = await sql`SELECT * FROM public.rooms WHERE TRIM(pin) = ${cleanPin}`;
   if (roomRows.length === 0) return null;
   const room = roomRows[0] as RoomRecord;
 
@@ -530,6 +538,7 @@ export async function getHostRoomSnapshotFromNeon(pin: string) {
 export async function getPlayerSessionFromNeon(pin: string, playerToken: string) {
   const sql = getSql();
 
+  const cleanPin = pin.trim();
   const rows = await sql`
     SELECT
       r.id as room_id, r.pin, r.status as room_status, r.current_question_index, r.question_started_at,
@@ -538,7 +547,7 @@ export async function getPlayerSessionFromNeon(pin: string, playerToken: string)
       (SELECT COUNT(*)::INTEGER FROM public.players WHERE room_id = r.id AND is_kicked = false AND total_score > p.total_score) as higher_count
     FROM public.rooms r
     JOIN public.players p ON p.room_id = r.id AND p.player_token = ${playerToken}::uuid
-    WHERE r.pin = ${pin}
+    WHERE TRIM(r.pin) = ${cleanPin}
   `;
 
   if (rows.length === 0) {

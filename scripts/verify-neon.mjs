@@ -4,14 +4,12 @@ const url = 'postgresql://neondb_owner:npg_6mAfs7hyYDwr@ep-super-union-b9po4gnc-
 
 async function main() {
   const sql = neon(url);
-  const tables = await sql`SELECT tablename FROM pg_tables WHERE schemaname = 'public'`;
-  console.log('Neon Tables:', tables.map(t => t.tablename));
-  
-  const roomCount = await sql`SELECT COUNT(*) FROM public.rooms`;
-  console.log('Room count in Neon:', roomCount[0].count);
+  const cols = await sql`
+    SELECT column_name, data_type, character_maximum_length 
+    FROM information_schema.columns 
+    WHERE table_name = 'rooms'
+  `;
+  console.log('Rooms columns:', cols);
 }
 
-main().catch(err => {
-  console.error('Error connecting to Neon:', err);
-  process.exit(1);
-});
+main().catch(console.error);

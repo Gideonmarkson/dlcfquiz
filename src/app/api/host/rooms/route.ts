@@ -41,6 +41,20 @@ export async function POST(req: NextRequest) {
         });
         roomId = neonResult.room.id;
         roomStatus = neonResult.room.status;
+
+        // Also register in in-memory store so process-local queries succeed instantly
+        try {
+          const room = mockCreateRoom({
+            pin,
+            title: title.slice(0, 120),
+            host_secret_hash: hostSecretHash,
+            host_recovery_code: hostRecoveryCode,
+          });
+          room.id = neonResult.room.id;
+          mockInsertQuestions(room.id, validation.data);
+        } catch {
+          // ignore cache sync error
+        }
       } catch (neonErr) {
         console.error('Neon room creation failed, falling back to mock store:', neonErr);
         const room = mockCreateRoom({

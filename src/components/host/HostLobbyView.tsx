@@ -17,7 +17,10 @@ export const HostLobbyView: React.FC<HostLobbyViewProps> = ({ onStartQuiz, isSta
   const questions = useHostStore((s) => s.questions);
   const [copied, setCopied] = useState(false);
 
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3001';
+  const baseUrl =
+    typeof window !== 'undefined' && !window.location.hostname.includes('localhost')
+      ? window.location.origin
+      : 'https://dlcfquiz.vercel.app';
   const joinUrl = `${baseUrl}/play?pin=${pin}`;
 
   const handleCopyUrl = () => {

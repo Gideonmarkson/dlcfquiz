@@ -41,7 +41,7 @@ export const JoinRoomForm: React.FC = () => {
     e.preventDefault();
     setErrorMessage(null);
 
-    const cleanPin = pin.trim();
+    const cleanPin = pin.trim().replace(/[^0-9]/g, '');
     const cleanNick = nickname.trim();
 
     if (!/^[0-9]{6}$/.test(cleanPin)) {
@@ -49,8 +49,8 @@ export const JoinRoomForm: React.FC = () => {
       return;
     }
 
-    if (cleanNick.length < 2 || cleanNick.length > 20) {
-      setErrorMessage('Name must be between 2 and 20 characters.');
+    if (cleanNick.length < 2 || cleanNick.length > 35) {
+      setErrorMessage('Name must be between 2 and 35 characters.');
       return;
     }
 

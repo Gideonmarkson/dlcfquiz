@@ -49,6 +49,7 @@ interface HostStore {
   isConnected: boolean;
   soundEnabled: boolean;
   channel: RealtimeChannel | null;
+  pollTimer: ReturnType<typeof setInterval> | null;
 
   setRoomState: (state: Partial<HostStore>) => void;
   addHype: (emoji: HypeEmoji, level: AcademicLevel) => void;
@@ -74,6 +75,7 @@ export const useHostStore = create<HostStore>((set, get) => ({
   isConnected: false,
   soundEnabled: true,
   channel: null,
+  pollTimer: null,
 
   setRoomState: (newState) => set((prev) => ({ ...prev, ...newState })),
 
@@ -106,10 +108,50 @@ export const useHostStore = create<HostStore>((set, get) => ({
 
   subscribeToRoom: (pin: string) => {
     const current = get();
+    if (current.pollTimer) {
+      clearInterval(current.pollTimer);
+    }
     if (current.channel) {
       current.channel.unsubscribe();
     }
 
+    // 1. Automatic Realtime Sync Heartbeat (1s interval)
+    // Ensures real-time responsiveness even without Supabase config
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/host/rooms/${pin}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || !data.room) return;
+
+        set((state) => {
+          const nextStatus = data.room.status;
+          if (state.status !== nextStatus) {
+            if (nextStatus === 'ANSWER_REVEALED') {
+              playRevealChime();
+            } else if (nextStatus === 'GAME_OVER') {
+              playPodiumFanfare();
+            }
+          }
+
+          return {
+            status: nextStatus,
+            currentQuestionIndex: data.room.currentQuestionIndex,
+            questionEndsAtMs: data.room.questionEndsAtMs ?? state.questionEndsAtMs,
+            players: data.players ?? state.players,
+            answeredCount: data.answeredCount ?? state.answeredCount,
+            reveal: data.reveal ?? state.reveal,
+            top5: data.top5 ?? state.top5,
+            podium: data.podium ?? state.podium,
+            isConnected: true,
+          };
+        });
+      } catch {
+        // network jitter, silent
+      }
+    }, 1000);
+
+    // 2. Supabase Realtime Broadcast Channel
     const roomChannel = supabaseBrowser.channel(`room:${pin}`, {
       config: {
         broadcast: { ack: false },
@@ -179,14 +221,17 @@ export const useHostStore = create<HostStore>((set, get) => ({
         set({ isConnected: status === 'SUBSCRIBED' });
       });
 
-    set({ channel: roomChannel, pin });
+    set({ channel: roomChannel, pin, pollTimer: pollInterval });
   },
 
   cleanup: () => {
     const current = get();
+    if (current.pollTimer) {
+      clearInterval(current.pollTimer);
+    }
     if (current.channel) {
       current.channel.unsubscribe();
-      set({ channel: null, isConnected: false });
     }
+    set({ channel: null, isConnected: false, pollTimer: null });
   },
 }));

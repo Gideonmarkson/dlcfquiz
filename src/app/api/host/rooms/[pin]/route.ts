@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { getHostSecretFromRequest, verifyHostSecret } from '@/lib/auth/hostAuth';
-import { HostQuestionDTO, LeaderboardEntryDTO } from '@/types/quiz';
+import { HostQuestionDTO, LeaderboardEntryDTO, RevealedAnswerDTO } from '@/types/quiz';
 import {
   isUsingMockDb,
   mockGetRoomByPin,
@@ -63,13 +63,38 @@ export async function GET(
 
       let answeredCount = 0;
       let questionEndsAtMs: number | null = null;
-      if (mockRoom.status === 'QUESTION_ACTIVE' && mockRoom.current_question_index >= 0) {
+      let reveal: RevealedAnswerDTO | null = null;
+
+      if (mockRoom.current_question_index >= 0) {
         const activeQ = hostQuestions[mockRoom.current_question_index];
         if (activeQ) {
           const ans = mockGetAnswersForQuestion(mockRoom.id, activeQ.id);
           answeredCount = ans.length;
           if (mockRoom.question_started_at) {
             questionEndsAtMs = new Date(mockRoom.question_started_at).getTime() + activeQ.timeLimitSec * 1000;
+          }
+
+          if (mockRoom.status === 'ANSWER_REVEALED') {
+            const optionCounts: [number, number, number, number] = [0, 0, 0, 0];
+            const optionPlayerNames: [string[], string[], string[], string[]] = [[], [], [], []];
+            const playerMap = new Map(pRecords.map((p) => [p.id, p.nickname]));
+            ans.forEach((a) => {
+              if (a.selected_option >= 0 && a.selected_option <= 3) {
+                optionCounts[a.selected_option]++;
+                const name = playerMap.get(a.player_id);
+                if (name) optionPlayerNames[a.selected_option].push(name);
+              }
+            });
+
+            reveal = {
+              questionId: activeQ.id,
+              correctOptionIndex: activeQ.correctOptionIndex,
+              scriptureRef: activeQ.scriptureRef,
+              explanation: activeQ.explanation,
+              optionCounts,
+              optionPlayerNames,
+              totalAnswered: ans.length,
+            };
           }
         }
       }
@@ -94,6 +119,7 @@ export async function GET(
           isKicked: p.is_kicked,
         })),
         answeredCount,
+        reveal,
         top5: top5.slice(0, 5),
         podium: top5.slice(0, 3),
         totalPlayers: sortedPlayers.length,
@@ -154,7 +180,9 @@ export async function GET(
 
     let answeredCount = 0;
     let questionEndsAtMs: number | null = null;
-    if (room.status === 'QUESTION_ACTIVE' && room.current_question_index >= 0) {
+    let reveal: RevealedAnswerDTO | null = null;
+
+    if (room.current_question_index >= 0) {
       const activeQ = hostQuestions[room.current_question_index];
       if (activeQ) {
         const { count } = await supabase
@@ -165,6 +193,35 @@ export async function GET(
 
         if (room.question_started_at) {
           questionEndsAtMs = new Date(room.question_started_at).getTime() + activeQ.timeLimitSec * 1000;
+        }
+
+        if (room.status === 'ANSWER_REVEALED') {
+          const { data: answers } = await supabase
+            .from('answers')
+            .select('selected_option, player_id')
+            .eq('question_id', activeQ.id);
+
+          const optionCounts: [number, number, number, number] = [0, 0, 0, 0];
+          const optionPlayerNames: [string[], string[], string[], string[]] = [[], [], [], []];
+          const playerMap = new Map((players || []).map((p) => [p.id, p.nickname]));
+
+          (answers || []).forEach((a) => {
+            if (a.selected_option >= 0 && a.selected_option <= 3) {
+              optionCounts[a.selected_option]++;
+              const name = playerMap.get(a.player_id);
+              if (name) optionPlayerNames[a.selected_option].push(name);
+            }
+          });
+
+          reveal = {
+            questionId: activeQ.id,
+            correctOptionIndex: activeQ.correctOptionIndex,
+            scriptureRef: activeQ.scriptureRef,
+            explanation: activeQ.explanation,
+            optionCounts,
+            optionPlayerNames,
+            totalAnswered: answers?.length || 0,
+          };
         }
       }
     }
@@ -189,6 +246,7 @@ export async function GET(
         isKicked: p.is_kicked,
       })),
       answeredCount,
+      reveal,
       top5: top5.slice(0, 5),
       podium: top5.slice(0, 3),
       totalPlayers: players?.length || 0,

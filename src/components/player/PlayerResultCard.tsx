@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { CheckCircle2, XCircle, Clock, BookOpen, Trophy, BarChart3, Check } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, BookOpen, Trophy } from 'lucide-react';
 import { usePlayerStore } from '@/store/usePlayerStore';
 
 export const PlayerResultCard: React.FC = () => {
@@ -17,10 +17,6 @@ export const PlayerResultCard: React.FC = () => {
   const score = result?.cumulativeScore;
   const rank = result?.currentRank;
   const totalPlayers = result?.totalPlayers;
-
-  const counts = reveal.optionCounts || [0, 0, 0, 0];
-  const totalAnswered = reveal.totalAnswered || 0;
-  const OPTION_KEYS = ['A', 'B', 'C', 'D'] as const;
 
   return (
     <div className="flex flex-col gap-4 w-full animate-fadeIn">
@@ -72,71 +68,6 @@ export const PlayerResultCard: React.FC = () => {
             {reveal.explanation}
           </p>
         )}
-      </div>
-
-      {/* Compact Response Distribution Bar Chart */}
-      <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 shadow-xl flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300">
-            <BarChart3 className="w-4 h-4 text-amber-400" />
-            <span>Class Response Breakdown</span>
-          </div>
-          <span className="text-[11px] text-slate-400 font-medium">
-            {totalAnswered} answered
-          </span>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          {OPTION_KEYS.map((key, idx) => {
-            const isOptionCorrect = idx === reveal.correctOptionIndex;
-            const count = counts[idx] || 0;
-            const pct = totalAnswered > 0 ? Math.round((count / totalAnswered) * 100) : 0;
-            const wasSelectedByMe = selectedOption === idx;
-
-            return (
-              <div key={key} className="flex flex-col gap-1">
-                <div className="flex items-center justify-between text-xs font-semibold">
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`w-5 h-5 rounded-md flex items-center justify-center font-black text-[11px] ${
-                        isOptionCorrect
-                          ? 'bg-emerald-500 text-slate-950 font-bold'
-                          : 'bg-slate-700 text-slate-300'
-                      }`}
-                    >
-                      {key}
-                    </span>
-                    {isOptionCorrect && (
-                      <span className="text-emerald-400 font-bold flex items-center gap-0.5 text-[11px]">
-                        <Check className="w-3 h-3" /> Correct
-                      </span>
-                    )}
-                    {wasSelectedByMe && (
-                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
-                        Your Pick
-                      </span>
-                    )}
-                  </div>
-                  <span className="tabular-nums text-slate-300 text-[11px]">
-                    {count} ({pct}%)
-                  </span>
-                </div>
-
-                {/* Horizontal Bar */}
-                <div className="w-full h-2 rounded-full bg-slate-900 border border-slate-700/50 overflow-hidden">
-                  <div
-                    style={{ width: `${Math.max(pct, count > 0 ? 5 : 0)}%` }}
-                    className={`h-full rounded-full transition-all duration-700 ${
-                      isOptionCorrect
-                        ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.7)]'
-                        : 'bg-slate-600'
-                    }`}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
       </div>
 
       {/* Live Rank & Total Score Summary */}

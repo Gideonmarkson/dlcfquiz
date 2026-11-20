@@ -60,6 +60,7 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
             questions: data.questions,
             players: data.players,
             answeredCount: data.answeredCount,
+            reveal: data.reveal ?? null,
             top5: data.top5,
             podium: data.podium,
           });

@@ -44,6 +44,7 @@ interface PlayerStore {
   isConnected: boolean;
   isReconnecting: boolean;
   channel: RealtimeChannel | null;
+  pollTimer: ReturnType<typeof setInterval> | null;
   lastHypeTime: number;
   hypeCountWindow: number[];
 
@@ -79,6 +80,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   isConnected: false,
   isReconnecting: false,
   channel: null,
+  pollTimer: null,
   lastHypeTime: 0,
   hypeCountWindow: [],
 
@@ -241,10 +243,74 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   subscribeToRoom: (pin: string) => {
     const current = get();
+    if (current.pollTimer) {
+      clearInterval(current.pollTimer);
+    }
     if (current.channel) {
       current.channel.unsubscribe();
     }
 
+    // 1. Automatic Realtime Sync Heartbeat (1s interval)
+    // Guarantees real-time screen updates without requiring manual browser refreshes
+    const pollInterval = setInterval(async () => {
+      const { playerToken } = get();
+      if (!playerToken) return;
+
+      try {
+        const res = await fetch(`/api/play/session?pin=${pin}`, {
+          headers: {
+            'X-Player-Token': playerToken,
+          },
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (!data || !data.roomSnapshot) return;
+
+        const serverNow = data.roomSnapshot.serverNowMs;
+        const localNow = Date.now();
+        const offset = serverNow - localNow;
+        const nextStatus = data.roomSnapshot.status;
+        const nextQIdx = data.roomSnapshot.currentQuestionIndex;
+
+        set((prev) => {
+          const isNewQuestion =
+            nextStatus === 'QUESTION_ACTIVE' &&
+            nextQIdx !== prev.currentQuestionIndex;
+
+          const resetSelection = isNewQuestion
+            ? { selectedOption: null, isLocked: false, result: null }
+            : {};
+
+          const selectedOpt = isNewQuestion
+            ? null
+            : (data.lockedOptionForActiveQuestion ?? prev.selectedOption);
+
+          return {
+            ...resetSelection,
+            roomStatus: nextStatus,
+            currentQuestionIndex: nextQIdx,
+            activeQuestion: data.activeQuestion ?? prev.activeQuestion,
+            questionEndsAtMs: data.roomSnapshot.questionEndsAtMs ?? prev.questionEndsAtMs,
+            reveal: data.reveal ?? prev.reveal,
+            clockOffsetMs: offset,
+            selectedOption: selectedOpt,
+            isLocked: isNewQuestion ? false : (selectedOpt !== null ? true : prev.isLocked),
+            isConnected: true,
+            isReconnecting: false,
+          };
+        });
+
+        // Automatically fetch personal result when revealed if not yet fetched
+        if (nextStatus === 'ANSWER_REVEALED' && data.reveal?.questionId && !get().result) {
+          get().fetchPersonalResult(pin, data.reveal.questionId);
+        }
+      } catch {
+        // network jitter, silent
+      }
+    }, 1000);
+
+    // 2. Supabase Realtime Broadcast Channel
     const roomChannel = supabaseBrowser.channel(`room:${pin}`, {
       config: {
         broadcast: { ack: false },
@@ -303,14 +369,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         });
       });
 
-    set({ channel: roomChannel, pin });
+    set({ channel: roomChannel, pin, pollTimer: pollInterval });
   },
 
   cleanup: () => {
     const current = get();
+    if (current.pollTimer) {
+      clearInterval(current.pollTimer);
+    }
     if (current.channel) {
       current.channel.unsubscribe();
-      set({ channel: null, isConnected: false });
     }
+    set({ channel: null, isConnected: false, pollTimer: null });
   },
 }));

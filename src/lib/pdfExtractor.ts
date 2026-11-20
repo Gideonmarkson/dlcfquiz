@@ -87,6 +87,7 @@ export async function extractQuestionsFromPdfFile(
   questions: QuestionInput[];
   errors: string[];
   parsedBy?: 'gemini-ai' | 'local-engine';
+  totalPages?: number;
 }> {
   // 1. Try high-performance server API route
   try {
@@ -115,6 +116,7 @@ export async function extractQuestionsFromPdfFile(
           questions: data.questions,
           errors: data.errors || [],
           parsedBy: data.parsedBy || 'gemini-ai',
+          totalPages: data.totalPages,
         };
       }
     }
@@ -188,14 +190,26 @@ function extractOptionsFromText(line: string): Array<{ letter: string; text: str
   return results;
 }
 
-const DOCUMENT_HEADER_PATTERNS = [
-  /^\s*technical\s+bible\s+questions/i,
-  /^\s*bible\s+quiz\s+(template|compilation|questions)/i,
-  /^\s*multiple\s+choice\s+(questions|quiz)/i,
-  /^\s*dlcf\s+afit/i,
-  /^\s*instructions?\s*[:\-]/i,
-  /^\s*page\s+\d+(\s+of\s+\d+)?$/i,
-];
+export function isHeaderOrFooterLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return true;
+
+  // Horizontal divider rules
+  if (/^[-=_*~]{3,}$/.test(trimmed)) return true;
+
+  // Standalone page numbers: "1", "2", "- 2 -", "~ 3 ~", "[ 2 ]", "Page 2", "Page 2 of 4", "2 / 4"
+  if (/^[-–—~*(\[]*\s*\d+\s*[-–—~*)\]]*$/.test(trimmed)) return true;
+  if (/^page\s*[:#]?\s*(\d+|\w+)(\s*(of|\/)\s*(\d+|\w+))?$/i.test(trimmed)) return true;
+  if (/^\d+\s*(of|\/)\s*\d+$/i.test(trimmed)) return true;
+
+  // Fellowship and event headers
+  if (/^(dlcf|deeper\s+life|afit|campus\s+fellowship)/i.test(trimmed)) return true;
+  if (/^(technical\s+bible\s+questions|bible\s+quiz|multiple\s+choice\s+quiz)/i.test(trimmed)) return true;
+  if (/^(section|round|part)\s+[a-z0-9]+/i.test(trimmed)) return true;
+  if (/^(instructions?|guidelines?|rules?)[\s.:-]/i.test(trimmed)) return true;
+
+  return false;
+}
 
 /**
  * Extracts green-colored text segments from raw Latin1 PDF streams
@@ -239,7 +253,7 @@ export function extractGreenTextsFromPdf(latin1Text: string): string[] {
 }
 
 /**
- * Parses raw extracted text into structured QuestionInput objects
+ * Parses raw extracted text into structured QuestionInput objects across all pages
  */
 export function parseQuestionsFromRawText(
   rawText: string,
@@ -252,17 +266,44 @@ export function parseQuestionsFromRawText(
   const lines = rawText
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !DOCUMENT_HEADER_PATTERNS.some((pattern) => pattern.test(l)));
+    .filter((l) => l.length > 0 && !isHeaderOrFooterLine(l));
 
   const questions: QuestionInput[] = [];
   const errors: string[] = [];
 
-  const isQuestionStart = (line: string) => {
-    return (
-      /^question\s*\d+[\s.:]/i.test(line) ||
-      /^q\d+[\s.:]/i.test(line) ||
-      /^\d+[\s.):-]\s*[A-Za-z]/i.test(line)
-    );
+  interface IntermediateQuestion {
+    prompt: string;
+    options: Array<{ letter: string; text: string }>;
+    correctIndex: number | null;
+    scriptureRef: string;
+    explanation: string | null;
+    timeLimitSec: number;
+    sourceIndex: number;
+  }
+
+  let currentQ: IntermediateQuestion | null = null;
+  let qCounter = 0;
+
+  const isQuestionStart = (line: string, activeQ: IntermediateQuestion | null): boolean => {
+    const trimmed = line.trim();
+    if (trimmed.length < 3) return false;
+
+    // 1. Explicit question prefixes:
+    // Question 1:, Q1., 1., 1), (1), [1], 1 - , 1: , 1. "Who...
+    if (/^(?:question|q|item)\s*\d+[\s.:-]/i.test(trimmed)) return true;
+    if (/^(?:\(|\[)?\d+(?:\)|\]|\.|\:|-)\s*[\"“'‘(\[]?[A-Za-z0-9]/i.test(trimmed)) return true;
+    if (/^\d+\s*[-–—]\s*[\"“'‘(\[]?[A-Za-z0-9]/i.test(trimmed)) return true;
+    if (/^(?:[I|V|X]+)\.\s*[\"“'‘(\[]?[A-Za-z0-9]/i.test(trimmed)) return true;
+
+    // 2. Question starting without number when previous question is complete
+    const isInterrogative = /^(?:who|which|what|where|when|why|how|in\s+which|in\s+what|according\s+to|name\s+the|identify|true\s+or\s+false)\b/i.test(trimmed);
+    if (isInterrogative && (trimmed.includes('?') || trimmed.length > 25)) {
+      if (activeQ && (activeQ.options.length >= 2 || activeQ.correctIndex !== null)) {
+        return true;
+      }
+    }
+
+    return false;
   };
 
   const isAnswerLine = (line: string) => {
@@ -280,19 +321,6 @@ export function parseQuestionsFromRawText(
   const isTimerLine = (line: string) => {
     return /^(time\s*limit|timer|time)[\s.:=]/i.test(line);
   };
-
-  interface IntermediateQuestion {
-    prompt: string;
-    options: Array<{ letter: string; text: string }>;
-    correctIndex: number | null;
-    scriptureRef: string;
-    explanation: string | null;
-    timeLimitSec: number;
-    sourceIndex: number;
-  }
-
-  let currentQ: IntermediateQuestion | null = null;
-  let qCounter = 0;
 
   const flushCurrent = () => {
     if (!currentQ) return;
@@ -369,10 +397,13 @@ export function parseQuestionsFromRawText(
   };
 
   for (const line of lines) {
-    if (isQuestionStart(line)) {
+    if (isQuestionStart(line, currentQ)) {
       flushCurrent();
       const promptText = line
-        .replace(/^(question\s*\d+[\s.:]|q\d+[\s.:]|\d+[\s.):-]\s*)/i, '')
+        .replace(/^(?:question|q|item)\s*\d+[\s.:-]*\s*/i, '')
+        .replace(/^(?:\(|\[)?\d+(?:\)|\]|\.|\:|-)*\s*/i, '')
+        .replace(/^\d+\s*[-–—]*\s*/i, '')
+        .replace(/^(?:[I|V|X]+)\.\s*/i, '')
         .trim();
       currentQ = {
         prompt: promptText,
@@ -475,13 +506,22 @@ export function parseQuestionsFromRawText(
       currentQ.options.length < 4 &&
       line.length < 150
     ) {
-      const letter = ['A', 'B', 'C', 'D'][currentQ.options.length];
-      currentQ.options.push({ letter, text: line });
-      continue;
+      if (
+        !isHeaderOrFooterLine(line) &&
+        !isAnswerLine(line) &&
+        !isQuestionStart(line, currentQ) &&
+        !isScriptureLine(line) &&
+        !isExplanationLine(line) &&
+        !isTimerLine(line)
+      ) {
+        const letter = ['A', 'B', 'C', 'D'][currentQ.options.length];
+        currentQ.options.push({ letter, text: line });
+        continue;
+      }
     }
 
     // Append to prompt if options not yet started
-    if (currentQ.options.length === 0) {
+    if (currentQ.options.length === 0 && !isHeaderOrFooterLine(line)) {
       currentQ.prompt += ' ' + line;
     }
   }

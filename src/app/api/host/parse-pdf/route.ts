@@ -23,12 +23,17 @@ export async function POST(req: NextRequest) {
 
     // Extract text across all pages using unpdf
     let fullText = '';
+    let pageTexts: string[] = [];
+    let totalPages = 1;
     try {
       const extractionResult = await extractText(pdfData);
+      totalPages = extractionResult.totalPages || 1;
       if (Array.isArray(extractionResult.text)) {
+        pageTexts = extractionResult.text;
         fullText = extractionResult.text.join('\n\n');
       } else if (typeof extractionResult.text === 'string') {
         fullText = extractionResult.text;
+        pageTexts = [extractionResult.text];
       }
     } catch (extractErr) {
       console.warn('unpdf text extraction warning:', extractErr);
@@ -43,16 +48,16 @@ export async function POST(req: NextRequest) {
     // If GEMINI_API_KEY is configured in env or passed by host, Gemini reads directly
     if (isGeminiConfigured(explicitApiKey)) {
       try {
-        console.log('Invoking Gemini AI for intelligent PDF question parsing...');
-        const geminiResult = await parsePdfWithGemini(arrayBuffer, fullText, explicitApiKey);
+        console.log(`Invoking Gemini AI for intelligent multi-page PDF parsing (${totalPages} page${totalPages > 1 ? 's' : ''})...`);
+        const geminiResult = await parsePdfWithGemini(arrayBuffer, fullText, explicitApiKey, pageTexts);
         if (geminiResult.success && geminiResult.questions.length > 0) {
-          console.log(`Gemini successfully extracted ${geminiResult.questions.length} questions!`);
+          console.log(`Gemini successfully extracted ${geminiResult.questions.length} questions across ${totalPages} pages!`);
           return NextResponse.json({
             success: true,
             questions: geminiResult.questions,
             errors: geminiResult.errors,
             parsedBy: 'gemini-ai',
-            totalPages: 1,
+            totalPages,
           });
         } else {
           console.warn('Gemini returned no questions, falling back to rule-based engine:', geminiResult.errors);
@@ -88,8 +93,9 @@ export async function POST(req: NextRequest) {
       success: parseResult.success,
       questions: parseResult.questions,
       errors: parseResult.errors,
-      rawTextPreview: fullText.slice(0, 500),
+      rawTextPreview: fullText.slice(0, 50000),
       parsedBy: 'local-engine',
+      totalPages,
     });
   } catch (error) {
     console.error('PDF parsing error in API route:', error);

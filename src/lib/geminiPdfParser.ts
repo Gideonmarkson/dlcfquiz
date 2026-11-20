@@ -19,7 +19,8 @@ export function isGeminiConfigured(overrideKey?: string): boolean {
 export async function parsePdfWithGemini(
   pdfBuffer: ArrayBuffer,
   extractedTextFallback?: string,
-  overrideKey?: string
+  overrideKey?: string,
+  pageTexts?: string[]
 ): Promise<{
   success: boolean;
   questions: QuestionInput[];
@@ -42,12 +43,21 @@ export async function parsePdfWithGemini(
 
   const ai = new GoogleGenAI({ apiKey });
 
+  const totalPages = pageTexts && pageTexts.length > 0 ? pageTexts.length : 1;
+
   const prompt = `You are an expert Bible quiz parser for the Deeper Life Campus Fellowship (DLCF) at Air Force Institute of Technology (AFIT).
 
-Analyze this document and extract ALL multiple-choice Bible questions into a clean JSON array.
+Analyze this ${totalPages > 1 ? `${totalPages}-PAGE` : ''} document and extract ALL multiple-choice Bible questions into a clean JSON array.
+
+*** CRITICAL MULTI-PAGE COMPLETENESS REQUIREMENT ***
+1. This PDF document contains ${totalPages} PAGE(S).
+2. You MUST inspect and extract questions from EVERY SINGLE PAGE (Page 1, Page 2${totalPages > 2 ? `, through Page ${totalPages}` : ''}) all the way to the very last page!
+3. DO NOT stop after Page 1!
+4. DO NOT omit, skip, or summarize ANY questions from any page.
+5. If Page 1 has questions 1-10 and Page 2 has questions 11-20, your final output JSON array MUST include ALL 20 questions!
 
 RULES:
-1. IGNORE title headers, decorative headers (such as "TECHNICAL BIBLE QUESTIONS Multiple Choice Quiz"), rules, page numbers, instructions, or exam guidelines.
+1. IGNORE title headers, decorative headers (such as "TECHNICAL BIBLE QUESTIONS Multiple Choice Quiz", "DLCF AFIT", etc.), rules, page numbers (e.g. "Page 2 of 4", "2"), instructions, or exam guidelines.
 2. For each question:
    - "prompt": The full, clear question text (e.g. "Which judge of Israel was known for his great strength and riddle about a lion and honey?").
    - "options": An array of exactly 4 strings [Option A, Option B, Option C, Option D]. If options in the document were lettered (A-D) or numbered (1-4) or roman numerals, strip the letters and provide the clean text.
@@ -83,6 +93,17 @@ Return ONLY a JSON array matching this format:
 
   try {
     const base64Pdf = Buffer.from(pdfBuffer).toString('base64');
+
+    // Build page-by-page text transcript for maximum multi-page comprehension
+    let formattedTextTranscript = '';
+    if (pageTexts && pageTexts.length > 0) {
+      formattedTextTranscript = pageTexts
+        .map((pText, pIdx) => `=== DOCUMENT PAGE ${pIdx + 1} OF ${pageTexts.length} ===\n${pText.trim()}`)
+        .join('\n\n');
+    } else if (extractedTextFallback) {
+      formattedTextTranscript = extractedTextFallback;
+    }
+
     const contentParts = [
       { text: prompt },
       {
@@ -91,25 +112,33 @@ Return ONLY a JSON array matching this format:
           data: base64Pdf,
         },
       },
-      ...(extractedTextFallback
-        ? [{ text: `\n\n--- EXTRACTED TEXT FROM DOCUMENT ---\n${extractedTextFallback.slice(0, 30000)}` }]
+      ...(formattedTextTranscript
+        ? [{ text: `\n\n--- EXTRACTED FULL TEXT TRANSCRIPT ACROSS ALL ${totalPages} PAGES ---\n${formattedTextTranscript.slice(0, 100000)}` }]
         : []),
     ];
 
-    // Try Gemini 2.5 Flash, falling back to Gemini 1.5 Flash if needed
+    // Try Gemini 2.0 Flash (high quality, multimodal, fast), falling back to Gemini 1.5 Flash
     let response;
     try {
       response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-2.0-flash',
         contents: [{ role: 'user', parts: contentParts }],
-        config: { responseMimeType: 'application/json' },
+        config: {
+          responseMimeType: 'application/json',
+          maxOutputTokens: 8192,
+          temperature: 0.1,
+        },
       });
     } catch (modelErr) {
-      console.warn('Gemini 2.5 Flash call failed, attempting fallback to gemini-1.5-flash:', modelErr);
+      console.warn('Gemini 2.0 Flash call failed, attempting fallback to gemini-1.5-flash:', modelErr);
       response = await ai.models.generateContent({
         model: 'gemini-1.5-flash',
         contents: [{ role: 'user', parts: contentParts }],
-        config: { responseMimeType: 'application/json' },
+        config: {
+          responseMimeType: 'application/json',
+          maxOutputTokens: 8192,
+          temperature: 0.1,
+        },
       });
     }
 

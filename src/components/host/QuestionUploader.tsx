@@ -22,6 +22,7 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
   const [isProcessing, setIsProcessing] = useState(false);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [successCount, setSuccessCount] = useState<number | null>(null);
+  const [totalPagesFound, setTotalPagesFound] = useState<number | null>(null);
   const [parsedSource, setParsedSource] = useState<'gemini-ai' | 'local-engine' | null>(null);
   const [geminiKey, setGeminiKey] = useState<string>('');
   const [showKeyInput, setShowKeyInput] = useState<boolean>(false);
@@ -47,6 +48,7 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
   const handleFileProcess = async (file: File) => {
     setParseErrors([]);
     setSuccessCount(null);
+    setTotalPagesFound(null);
     setParsedSource(null);
 
     const fileName = file.name.toLowerCase();
@@ -68,6 +70,7 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
         const parseResult = await extractQuestionsFromPdfFile(file, geminiKey.trim() || undefined);
         if (parseResult.success && parseResult.questions.length > 0) {
           setSuccessCount(parseResult.questions.length);
+          setTotalPagesFound(parseResult.totalPages || 1);
           setParsedSource(parseResult.parsedBy || 'gemini-ai');
           onQuestionsLoaded(parseResult.questions);
         } else {
@@ -219,7 +222,7 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
           <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-3.5 py-1.5 rounded-full shadow-sm">
             <FileCheck className="w-4 h-4 text-emerald-400" />
             <span>
-              Loaded {successCount} questions{' '}
+              Loaded all {successCount} questions {totalPagesFound && totalPagesFound > 1 ? `across all ${totalPagesFound} pages ` : ''}
               {parsedSource === 'gemini-ai' ? 'via Google Gemini AI!' : 'from document!'}
             </span>
           </div>

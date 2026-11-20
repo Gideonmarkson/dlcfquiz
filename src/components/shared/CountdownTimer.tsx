@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { playCountdownTick, playUrgentTick } from '@/lib/audio';
-import { AlertTriangle, Clock } from 'lucide-react';
+import { Clock } from 'lucide-react';
 
 interface CountdownTimerProps {
   totalSeconds: number;
@@ -112,39 +112,14 @@ export const CountdownTimer: React.FC<CountdownTimerProps> = ({
         </div>
       </div>
 
-      {/* Dramatic Full-Screen Low Time State Overlay (<= 10s) */}
+      {/* Dramatic Low Time Ambient Edge Ring (<= 10s) - NEVER blocks any option or text */}
       {showFullScreenLowTimeOverlay && isLowTimeState && (
         <div
           aria-live="assertive"
-          className="fixed inset-0 z-40 pointer-events-none flex flex-col items-center justify-center overflow-hidden"
+          className="fixed inset-0 z-10 pointer-events-none overflow-hidden"
         >
-          {/* Transparent Red Tint: options and buttons remain 100% visible and selectable */}
-          <div className="absolute inset-0 bg-red-600/15 pointer-events-none transition-opacity duration-300 ring-4 ring-inset ring-red-500/30" />
-
-          {/* Top Emergency Low Time Badge */}
-          <div className="relative z-10 px-5 py-1.5 sm:px-7 sm:py-2 rounded-full bg-red-600/85 border border-red-400/50 text-white font-black text-xs sm:text-base md:text-lg uppercase tracking-widest shadow-xl flex items-center gap-2.5 animate-bounce mb-3">
-            <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-amber-300 animate-pulse shrink-0" />
-            <span>
-              {isHost
-                ? `FINAL ${remainingSeconds} SECONDS!`
-                : `HURRY! ${remainingSeconds}S REMAINING!`}
-            </span>
-          </div>
-
-          {/* Semi-Transparent Background Watermark Number (Never blocks options) */}
-          <div
-            key={remainingSeconds}
-            className="relative z-0 flex flex-col items-center justify-center select-none animate-timer-pop opacity-25"
-          >
-            <span
-              className="font-black text-[38vw] md:text-[30vw] xl:text-[24vw] leading-none text-red-400 tabular-nums tracking-tighter"
-            >
-              {remainingSeconds}
-            </span>
-            <span className="text-xs sm:text-lg md:text-xl font-black uppercase tracking-[0.35em] text-red-300/80 -mt-3 sm:-mt-6 md:-mt-8">
-              Seconds Remaining
-            </span>
-          </div>
+          {/* Subtle Red Edge Ring only: all options A, B, C, D remain 100% visible and unblocked */}
+          <div className="absolute inset-0 pointer-events-none ring-4 ring-inset ring-red-500/30 transition-opacity duration-300" />
         </div>
       )}
     </>

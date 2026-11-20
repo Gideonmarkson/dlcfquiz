@@ -135,7 +135,16 @@ export async function extractQuestionsFromPdfFile(
     };
   }
 
-  const result = parseQuestionsFromRawText(rawText);
+  let greenTexts: string[] = [];
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const latin1Text = new TextDecoder('latin1').decode(new Uint8Array(arrayBuffer));
+    greenTexts = extractGreenTextsFromPdf(latin1Text);
+  } catch {
+    // ignore
+  }
+
+  const result = parseQuestionsFromRawText(rawText, greenTexts);
   return {
     ...result,
     parsedBy: 'local-engine',
@@ -189,9 +198,53 @@ const DOCUMENT_HEADER_PATTERNS = [
 ];
 
 /**
+ * Extracts green-colored text segments from raw Latin1 PDF streams
+ */
+export function extractGreenTextsFromPdf(latin1Text: string): string[] {
+  const greenTexts = new Set<string>();
+  const rgbGreenPattern =
+    /(\d*(?:\.\d+)?)\s+(\d*(?:\.\d+)?)\s+(\d*(?:\.\d+)?)\s+rg\s*([\s\S]*?)(?=(?:\d*(?:\.\d+)?\s+\d*(?:\.\d+)?\s+\d*(?:\.\d+)?\s+rg|ET))/gi;
+
+  let match;
+  while ((match = rgbGreenPattern.exec(latin1Text)) !== null) {
+    const r = parseFloat(match[1]);
+    const g = parseFloat(match[2]);
+    const b = parseFloat(match[3]);
+    const block = match[4];
+
+    if (g > 0.35 && g > r + 0.15 && g > b + 0.15) {
+      const tjRegex = /\((.*?)\)\s*Tj/g;
+      let tjMatch;
+      while ((tjMatch = tjRegex.exec(block)) !== null) {
+        const clean = tjMatch[1].replace(/\\([()\\])/g, '$1').trim();
+        if (clean.length > 0) greenTexts.add(clean.toLowerCase());
+      }
+
+      const tjArrRegex = /\[(.*?)\]\s*TJ/g;
+      let arrMatch;
+      while ((arrMatch = tjArrRegex.exec(block)) !== null) {
+        const inner = arrMatch[1];
+        const innerRegex = /\((.*?)\)/g;
+        let inM;
+        let fullStr = '';
+        while ((inM = innerRegex.exec(inner)) !== null) {
+          fullStr += inM[1].replace(/\\([()\\])/g, '$1');
+        }
+        if (fullStr.trim().length > 0) greenTexts.add(fullStr.trim().toLowerCase());
+      }
+    }
+  }
+
+  return Array.from(greenTexts);
+}
+
+/**
  * Parses raw extracted text into structured QuestionInput objects
  */
-export function parseQuestionsFromRawText(rawText: string): {
+export function parseQuestionsFromRawText(
+  rawText: string,
+  greenTexts?: string[]
+): {
   success: boolean;
   questions: QuestionInput[];
   errors: string[];
@@ -278,6 +331,31 @@ export function parseQuestionsFromRawText(rawText: string): {
     let correctOptIndex: 0 | 1 | 2 | 3 = 0;
     if (currentQ.correctIndex !== null && [0, 1, 2, 3].includes(currentQ.correctIndex)) {
       correctOptIndex = currentQ.correctIndex as 0 | 1 | 2 | 3;
+    } else {
+      // Check if any option is green or has an explicit marker
+      const candidateList = [optionA, optionB, optionC, optionD];
+      for (let i = 0; i < candidateList.length; i++) {
+        const textLower = candidateList[i].toLowerCase();
+        const isGreen =
+          greenTexts &&
+          greenTexts.some(
+            (gt) =>
+              gt.length > 2 &&
+              (textLower.includes(gt) || gt.includes(textLower.slice(0, 20)))
+          );
+
+        if (
+          isGreen ||
+          textLower.includes('(correct)') ||
+          textLower.includes('(ans)') ||
+          textLower.includes('[x]') ||
+          textLower.startsWith('*') ||
+          textLower.endsWith('*')
+        ) {
+          correctOptIndex = i as 0 | 1 | 2 | 3;
+          break;
+        }
+      }
     }
 
     questions.push({

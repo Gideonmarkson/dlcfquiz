@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractText } from 'unpdf';
-import { parseQuestionsFromRawText } from '@/lib/pdfExtractor';
+import { parseQuestionsFromRawText, extractGreenTextsFromPdf } from '@/lib/pdfExtractor';
 import { isGeminiConfigured, parsePdfWithGemini } from '@/lib/geminiPdfParser';
 
 export const runtime = 'nodejs';
@@ -74,7 +74,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const parseResult = parseQuestionsFromRawText(fullText);
+    let greenTexts: string[] = [];
+    try {
+      const latin1Text = Buffer.from(arrayBuffer).toString('latin1');
+      greenTexts = extractGreenTextsFromPdf(latin1Text);
+    } catch {
+      // ignore
+    }
+
+    const parseResult = parseQuestionsFromRawText(fullText, greenTexts);
 
     return NextResponse.json({
       success: parseResult.success,

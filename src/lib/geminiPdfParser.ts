@@ -51,9 +51,20 @@ RULES:
 2. For each question:
    - "prompt": The full, clear question text (e.g. "Which judge of Israel was known for his great strength and riddle about a lion and honey?").
    - "options": An array of exactly 4 strings [Option A, Option B, Option C, Option D]. If options in the document were lettered (A-D) or numbered (1-4) or roman numerals, strip the letters and provide the clean text.
-   - "correctOptionIndex": Integer 0, 1, 2, or 3 representing the correct option (0 for A, 1 for B, 2 for C, 3 for D).
-     * If an answer key or correct answer is provided in the document (e.g., "Answer: Samson", "Ans: A", bolded text, or an answer table at the end), use it.
-     * If NO answer is explicitly stated in the document, use authoritative Holy Bible (KJV) knowledge to determine the true correct answer.
+
+   - "correctOptionIndex": Integer 0, 1, 2, or 3 representing the correct option (0 for Option A, 1 for Option B, 2 for Option C, 3 for Option D).
+     *** HIGHEST PRIORITY - GREEN COLOR VISUAL DETECTION ***
+     * In this PDF document, the quiz author has visually marked the correct answer in GREEN!
+     * Inspect the visual colors of each option in the PDF rendering:
+       - If an option's text is written in GREEN font/color, THAT IS THE CORRECT ANSWER!
+       - If an option has a GREEN background highlight, shading, or box, THAT IS THE CORRECT ANSWER!
+       - If an option has a GREEN checkmark, bullet, circle, or border next to it, THAT IS THE CORRECT ANSWER!
+       - You MUST set "correctOptionIndex" to the exact option that is styled in GREEN (0 for A, 1 for B, 2 for C, 3 for D).
+     * If NO option is visually colored green:
+       - Check for an explicit answer label (e.g., "Answer: B", "Ans: C", bold text, or an answer key table).
+       - If still no indicator, use authoritative King James Holy Bible (KJV) knowledge to determine which option is the true biblical answer.
+     * NEVER automatically default to Option A (index 0) if another option (B, C, or D) is green or is the correct biblical answer!
+
    - "scriptureRef": The accurate King James Bible scripture reference (Book Chapter:Verse, e.g. "Judges 14:14", "Acts 2:1-4"). If not given in text, infer the exact biblical reference.
    - "explanation": A concise 1-sentence doctrinal note explaining why the answer is correct according to the scriptures.
    - "timeLimitSec": Recommended timer in seconds (default 20, between 15 and 30).
@@ -165,12 +176,30 @@ Return ONLY a JSON array matching this format:
       }
 
       let correctIdx: 0 | 1 | 2 | 3 = 0;
-      if (typeof q.correctOptionIndex === 'number' && [0, 1, 2, 3].includes(q.correctOptionIndex)) {
-        correctIdx = q.correctOptionIndex as 0 | 1 | 2 | 3;
-      } else if (typeof q.correctOptionIndex === 'string') {
-        const letter = q.correctOptionIndex.trim().toUpperCase();
+      const rawAns =
+        q.correctOptionIndex !== undefined
+          ? q.correctOptionIndex
+          : (q as Record<string, unknown>).correctAnswer !== undefined
+          ? (q as Record<string, unknown>).correctAnswer
+          : (q as Record<string, unknown>).answer;
+
+      if (typeof rawAns === 'number' && [0, 1, 2, 3].includes(rawAns)) {
+        correctIdx = rawAns as 0 | 1 | 2 | 3;
+      } else if (typeof rawAns === 'string') {
+        const letter = rawAns.trim().toUpperCase();
         const map: Record<string, 0 | 1 | 2 | 3> = { A: 0, B: 1, C: 2, D: 3 };
-        if (map[letter] !== undefined) correctIdx = map[letter];
+        if (map[letter] !== undefined) {
+          correctIdx = map[letter];
+        } else {
+          const matched = optionsList.findIndex(
+            (o) =>
+              o.toLowerCase().trim() === rawAns.toLowerCase().trim() ||
+              o.toLowerCase().includes(rawAns.toLowerCase().trim())
+          );
+          if (matched !== -1) {
+            correctIdx = matched as 0 | 1 | 2 | 3;
+          }
+        }
       }
 
       const scripture =

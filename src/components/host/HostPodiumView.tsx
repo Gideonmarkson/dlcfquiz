@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Trophy, Download, RotateCcw, Crown, Medal } from 'lucide-react';
+import { Trophy, Download, RotateCcw, Crown, Medal, Home, ArrowLeft } from 'lucide-react';
 import { useHostStore } from '@/store/useHostStore';
 import { AcademicLevelBadge } from '@/components/shared/AcademicLevelBadge';
 
@@ -135,10 +135,18 @@ export const HostPodiumView: React.FC = () => {
 
         <a
           href="/host"
-          className="inline-flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-sm md:text-base rounded-2xl shadow transition active:scale-95"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm md:text-base rounded-2xl shadow transition active:scale-95"
         >
           <RotateCcw className="w-5 h-5" />
-          <span>Create New Quiz Room</span>
+          <span>Host Another Quiz</span>
+        </a>
+
+        <a
+          href="/"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-sm md:text-base rounded-2xl shadow transition active:scale-95"
+        >
+          <Home className="w-5 h-5" />
+          <span>Back to Home</span>
         </a>
       </div>
     </div>

@@ -4,12 +4,17 @@ const url = 'postgresql://neondb_owner:npg_6mAfs7hyYDwr@ep-super-union-b9po4gnc-
 
 async function main() {
   const sql = neon(url);
-  const cols = await sql`
-    SELECT column_name, data_type, character_maximum_length 
-    FROM information_schema.columns 
-    WHERE table_name = 'rooms'
+  const players = await sql`
+    SELECT p.nickname, p.academic_level, p.joined_at 
+    FROM public.players p
+    JOIN public.rooms r ON r.id = p.room_id
+    WHERE r.pin = '318028'
+    ORDER BY p.joined_at ASC
   `;
-  console.log('Rooms columns:', cols);
+  console.log(`Players currently in room 318028 (Total: ${players.length}):`);
+  for (const p of players) {
+    console.log(`- ${p.nickname} (${p.academic_level})`);
+  }
 }
 
 main().catch(console.error);

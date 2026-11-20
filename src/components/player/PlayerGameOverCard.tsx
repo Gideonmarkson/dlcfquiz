@@ -1,9 +1,10 @@
 'use client';
 
 import React from 'react';
-import { Crown, Trophy, Award, RotateCcw } from 'lucide-react';
+import { Crown, Trophy, Award, RotateCcw, ArrowLeft, Home } from 'lucide-react';
 import { usePlayerStore } from '@/store/usePlayerStore';
 import { AcademicLevelBadge } from '@/components/shared/AcademicLevelBadge';
+import Link from 'next/link';
 
 export const PlayerGameOverCard: React.FC = () => {
   const nickname = usePlayerStore((s) => s.nickname);
@@ -67,18 +68,32 @@ export const PlayerGameOverCard: React.FC = () => {
         </span>
       </div>
 
-      {/* Action Button */}
-      <button
-        type="button"
-        onClick={() => {
-          clearSession();
-          window.location.href = '/play';
-        }}
-        className="w-full py-3.5 px-6 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-extrabold text-sm md:text-base shadow transition active:scale-95 flex items-center justify-center gap-2"
-      >
-        <RotateCcw className="w-4 h-4" />
-        <span>Join Another Fellowship Quiz</span>
-      </button>
+      {/* Action Buttons */}
+      <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
+        <button
+          type="button"
+          onClick={() => {
+            clearSession();
+            window.location.href = '/play';
+          }}
+          className="w-full py-3.5 px-6 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm md:text-base shadow-lg transition active:scale-95 flex items-center justify-center gap-2"
+        >
+          <RotateCcw className="w-4 h-4" />
+          <span>Join Another Quiz</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            clearSession();
+            window.location.href = '/';
+          }}
+          className="w-full py-3.5 px-6 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-extrabold text-sm md:text-base shadow transition active:scale-95 flex items-center justify-center gap-2"
+        >
+          <Home className="w-4 h-4" />
+          <span>Back to Home</span>
+        </button>
+      </div>
     </div>
   );
 };

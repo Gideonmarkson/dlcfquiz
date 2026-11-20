@@ -3,21 +3,38 @@
 import React from 'react';
 import { usePlayerStore } from '@/store/usePlayerStore';
 import { AcademicLevelBadge } from '@/components/shared/AcademicLevelBadge';
-import { Trophy, Award } from 'lucide-react';
+import { Trophy, Award, ArrowLeft } from 'lucide-react';
 
 export const PlayerStatusHeader: React.FC = () => {
   const nickname = usePlayerStore((s) => s.nickname);
   const academicLevel = usePlayerStore((s) => s.academicLevel);
   const result = usePlayerStore((s) => s.result);
+  const clearSession = usePlayerStore((s) => s.clearSession);
 
   const score = result?.cumulativeScore ?? 0;
   const rank = result?.currentRank;
+
+  const handleExit = () => {
+    if (typeof window !== 'undefined' && confirm('Exit back to join page?')) {
+      clearSession();
+      window.location.href = '/play';
+    }
+  };
 
   return (
     <header className="w-full flex items-center justify-between py-3 px-4 bg-slate-800/80 border-b border-slate-700/80 backdrop-blur sticky top-0 z-30 shadow-md">
       {/* Player Identity */}
       <div className="flex items-center gap-2 overflow-hidden">
-        <span className="font-bold text-slate-100 text-sm truncate max-w-[130px]">
+        <button
+          type="button"
+          onClick={handleExit}
+          className="text-slate-400 hover:text-slate-200 p-1 -ml-1 rounded-lg hover:bg-slate-700/60 transition flex items-center gap-1 text-xs font-semibold"
+          title="Exit Quiz"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span className="hidden sm:inline">Back</span>
+        </button>
+        <span className="font-bold text-slate-100 text-sm truncate max-w-[120px]">
           {nickname || 'Student'}
         </span>
         <AcademicLevelBadge level={academicLevel} size="sm" />

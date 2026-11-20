@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useEffect, useState, use } from 'react';
-import { Volume2, VolumeX, Maximize, Minimize, AlertTriangle } from 'lucide-react';
+import Link from 'next/link';
+import { Volume2, VolumeX, Maximize, Minimize, AlertTriangle, ArrowLeft, Home } from 'lucide-react';
 import { useHostStore } from '@/store/useHostStore';
 import { HostLobbyView } from '@/components/host/HostLobbyView';
 import { HostQuestionActiveView } from '@/components/host/HostQuestionActiveView';
@@ -186,8 +187,16 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
       {/* Top Console Bar */}
       <header className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4 z-20">
         <div className="flex items-center gap-3">
+          <Link
+            href="/host"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition border border-slate-700 shadow-sm"
+            title="Exit to Host Setup"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Setup / Back</span>
+          </Link>
           <div className="w-3 h-3 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-          <span className="font-extrabold text-sm tracking-wider uppercase text-slate-300">
+          <span className="font-extrabold text-sm tracking-wider uppercase text-slate-300 hidden md:inline">
             DLCF AFIT Projector Console
           </span>
           <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/40">

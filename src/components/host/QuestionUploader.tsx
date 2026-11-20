@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
-import { Upload, FileText, Download, Sparkles, AlertCircle, RefreshCw, FileCheck } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Upload, FileText, Download, Sparkles, AlertCircle, RefreshCw, FileCheck, Bot, Key, Check } from 'lucide-react';
 import { QuestionInput } from '@/types/quiz';
 import {
   parseQuestionsFromCSV,
@@ -22,11 +22,32 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
   const [isProcessing, setIsProcessing] = useState(false);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [successCount, setSuccessCount] = useState<number | null>(null);
+  const [parsedSource, setParsedSource] = useState<'gemini-ai' | 'local-engine' | null>(null);
+  const [geminiKey, setGeminiKey] = useState<string>('');
+  const [showKeyInput, setShowKeyInput] = useState<boolean>(false);
+  const [keySaved, setKeySaved] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('dlcf_gemini_api_key') || '';
+      if (stored) setGeminiKey(stored);
+    }
+  }, []);
+
+  const handleSaveKey = (val: string) => {
+    setGeminiKey(val);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('dlcf_gemini_api_key', val.trim());
+      setKeySaved(true);
+      setTimeout(() => setKeySaved(false), 2000);
+    }
+  };
 
   const handleFileProcess = async (file: File) => {
     setParseErrors([]);
     setSuccessCount(null);
+    setParsedSource(null);
 
     const fileName = file.name.toLowerCase();
     const isPdf = fileName.endsWith('.pdf');
@@ -43,10 +64,11 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
 
     try {
       if (isPdf) {
-        // Extract questions directly via server engine & fallback
-        const parseResult = await extractQuestionsFromPdfFile(file);
+        // Extract questions directly via server engine & fallback (with Gemini key if present)
+        const parseResult = await extractQuestionsFromPdfFile(file, geminiKey.trim() || undefined);
         if (parseResult.success && parseResult.questions.length > 0) {
           setSuccessCount(parseResult.questions.length);
+          setParsedSource(parseResult.parsedBy || 'gemini-ai');
           onQuestionsLoaded(parseResult.questions);
         } else {
           setParseErrors(
@@ -194,9 +216,64 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
         )}
 
         {successCount !== null && (
-          <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-3 py-1 rounded-full">
-            <FileCheck className="w-4 h-4" />
-            <span>Loaded {successCount} questions from document!</span>
+          <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-3.5 py-1.5 rounded-full shadow-sm">
+            <FileCheck className="w-4 h-4 text-emerald-400" />
+            <span>
+              Loaded {successCount} questions{' '}
+              {parsedSource === 'gemini-ai' ? 'via Google Gemini AI!' : 'from document!'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Google AI (Gemini) Bar */}
+      <div className="flex flex-col gap-2 p-3 rounded-2xl bg-slate-900/60 border border-slate-700/60 text-xs">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 text-slate-300 font-semibold">
+            <Bot className="w-4 h-4 text-amber-400" />
+            <span>Google Gemini AI Document Reader:</span>
+            <span
+              className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                geminiKey.trim().length > 10
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+              }`}
+            >
+              {geminiKey.trim().length > 10 ? 'Host Key Configured' : 'Env Variable / Auto Mode'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowKeyInput(!showKeyInput)}
+            className="text-amber-400 hover:text-amber-300 font-medium underline transition"
+          >
+            {showKeyInput ? 'Hide Key Settings' : 'Configure Gemini Key'}
+          </button>
+        </div>
+
+        {showKeyInput && (
+          <div className="flex flex-col gap-2 pt-2 border-t border-slate-800">
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Gemini 2.5 Flash reads any PDF layout (tables, 2-column sheets, custom fonts) with multimodal AI.
+              Set in <code className="text-amber-300 font-mono">.env.local</code> or paste your key here:
+            </p>
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Key className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="password"
+                  placeholder="AIzaSy... (Google AI Studio Key)"
+                  value={geminiKey}
+                  onChange={(e) => handleSaveKey(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-400 font-mono"
+                />
+              </div>
+              {keySaved && (
+                <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-bold">
+                  <Check className="w-3.5 h-3.5" /> Saved
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>

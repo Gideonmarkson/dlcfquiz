@@ -1,20 +1,46 @@
-const BIBLE_BOOKS = [
-  'Genesis', 'Exodus', 'Leviticus', 'Numbers', 'Deuteronomy', 'Joshua', 'Judges', 'Ruth',
-  '1 Samuel', '2 Samuel', '1 Kings', '2 Kings', '1 Chronicles', '2 Chronicles', 'Ezra',
-  'Nehemiah', 'Esther', 'Job', 'Psalm', 'Psalms', 'Proverbs', 'Ecclesiastes', 'Song of Solomon',
-  'Isaiah', 'Jeremiah', 'Lamentations', 'Ezekiel', 'Daniel', 'Hosea', 'Joel', 'Amos',
-  'Obadiah', 'Jonah', 'Micah', 'Nahum', 'Habakkuk', 'Zephaniah', 'Haggai', 'Zechariah',
-  'Malachi', 'Matthew', 'Mark', 'Luke', 'John', 'Acts', 'Romans', '1 Corinthians',
-  '2 Corinthians', 'Galatians', 'Ephesians', 'Philippians', 'Colossians', '1 Thessalonians',
-  '2 Thessalonians', '1 Timothy', '2 Timothy', 'Titus', 'Philemon', 'Hebrews', 'James',
-  '1 Peter', '2 Peter', '1 John', '2 John', '3 John', 'Jude', 'Revelation'
-];
+// Test script for improved rule-based parsing
 
-const BIBLE_REGEX = new RegExp(
-  `\\b((?:[1-3]\\s+)?(?:${BIBLE_BOOKS.map(b => b.replace(/^[1-3]\s+/, '')).join('|')})\\s+\\d+:\\d+(?:-\\d+)?)\\b`,
-  'i'
-);
+function cleanHeaderLines(text) {
+  const HEADER_PATTERNS = [
+    /^\s*technical\s+bible\s+questions/i,
+    /^\s*bible\s+quiz\s+(template|compilation|questions)/i,
+    /^\s*multiple\s+choice\s+(questions|quiz)/i,
+    /^\s*dlcf\s+afit/i,
+    /^\s*instructions?\s*[:\-]/i,
+  ];
 
-console.log('Match Acts 1:8:', 'In Acts 1:8, Jesus said...'.match(BIBLE_REGEX)?.[1]);
-console.log('Match 2 Timothy 2:15 in parens:', 'Correct Answer: B (2 Timothy 2:15)'.match(BIBLE_REGEX)?.[1]);
-console.log('Match 1 Thessalonians 5:17:', 'Ref: 1 Thessalonians 5:17'.match(BIBLE_REGEX)?.[1]);
+  return text
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(line => {
+      if (!line) return false;
+      return !HEADER_PATTERNS.some(p => p.test(line));
+    });
+}
+
+function extractOptions(line) {
+  const results = [];
+  // Matches:
+  // A. Samson or A.Samson
+  // A) Samson or A)Samson
+  // Option A: Samson
+  // (A) Samson or [A] Samson
+  // 1) Samson or 1. Samson (when followed by 2., 3., 4.)
+  const regex = /(?:^|\s+)(?:option\s+)?(?:(?:\(|\[)?([A-Da-d])(?:\)|\]|\.|\:|-)?)\s*([\s\S]*?)(?=(?:\s+(?:option\s+)?(?:\(|\[)?[A-Da-d](?:\)|\]|\.|\:|-)?\s*)|$)/g;
+  let match;
+  while ((match = regex.exec(line)) !== null) {
+    const letter = match[1].toUpperCase();
+    const text = match[2].trim().replace(/^[:.-]\s*/, '');
+    if (['A', 'B', 'C', 'D'].includes(letter) && text.length > 0) {
+      results.push({ letter, text });
+    }
+  }
+  return results;
+}
+
+const lines = cleanHeaderLines('TECHNICAL BIBLE QUESTIONS Multiple Choice Quiz\n\n1. Which judge of Israel was known for his great strength and riddle about a lion and honey?\nA. Samson\nB. Gideon\nC. Jephthah\nD. Barak\nAnswer: A');
+
+console.log('Cleaned lines:', lines);
+console.log('Extracted options from A. Samson:', extractOptions('A. Samson'));
+console.log('Extracted options from A.Samson (no space):', extractOptions('A.Samson'));
+console.log('Extracted options from Option A: Samson:', extractOptions('Option A: Samson'));

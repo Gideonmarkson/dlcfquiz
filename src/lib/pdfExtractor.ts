@@ -79,18 +79,31 @@ export async function extractTextFromPdf(file: File): Promise<string> {
 /**
  * Directly extracts questions from PDF via server route or client-side parser
  */
-export async function extractQuestionsFromPdfFile(file: File): Promise<{
+export async function extractQuestionsFromPdfFile(
+  file: File,
+  geminiApiKeyOverride?: string
+): Promise<{
   success: boolean;
   questions: QuestionInput[];
   errors: string[];
+  parsedBy?: 'gemini-ai' | 'local-engine';
 }> {
   // 1. Try high-performance server API route
   try {
     const formData = new FormData();
     formData.append('file', file);
+    if (geminiApiKeyOverride) {
+      formData.append('geminiApiKey', geminiApiKeyOverride);
+    }
+
+    const headers: Record<string, string> = {};
+    if (geminiApiKeyOverride) {
+      headers['x-gemini-key'] = geminiApiKeyOverride;
+    }
 
     const res = await fetch('/api/host/parse-pdf', {
       method: 'POST',
+      headers,
       body: formData,
     });
 
@@ -101,6 +114,7 @@ export async function extractQuestionsFromPdfFile(file: File): Promise<{
           success: true,
           questions: data.questions,
           errors: data.errors || [],
+          parsedBy: data.parsedBy || 'gemini-ai',
         };
       }
     }
@@ -117,30 +131,62 @@ export async function extractQuestionsFromPdfFile(file: File): Promise<{
       errors: [
         'Could not extract text from this PDF. If this document was scanned from paper as a photo, please export it from Word or use our template.',
       ],
+      parsedBy: 'local-engine',
     };
   }
 
-  return parseQuestionsFromRawText(rawText);
+  const result = parseQuestionsFromRawText(rawText);
+  return {
+    ...result,
+    parsedBy: 'local-engine',
+  };
 }
 
 /**
- * Parses options from a line, supporting multiple options on the same line:
- * e.g. "A. Saul   B. David   C. Solomon   D. Samuel"
+ * Parses options from a line, supporting multiple options on the same line,
+ * with or without spacing after dots, and handles prefixes like 'Option A:'
  */
 function extractOptionsFromText(line: string): Array<{ letter: string; text: string }> {
   const results: Array<{ letter: string; text: string }> = [];
+  const normalized = line.replace(/\u00a0/g, ' ').trim();
+
+  // Pattern to find all option segments: (A) Text, A. Text, A) Text, Option A: Text, etc.
   const regex =
-    /(?:^|\s+)(?:(?:\(|\[)?([A-Da-d])(?:\)|\]|\.|\:|-))\s+([\s\S]*?)(?=(?:\s+(?:\(|\[)?[A-Da-d](?:\)|\]|\.|\:|-)\s+)|$)/g;
+    /(?:^|\s+)(?:option\s+)?(?:\(|\[)?([A-Da-d])(?:\)|\]|\.|\:|-)?\s+([^\n\r]*?)(?=(?:\s+(?:option\s+)?(?:\(|\[)?[A-Da-d](?:\)|\]|\.|\:|-)?\s+)|$)/gi;
+
   let match;
-  while ((match = regex.exec(line)) !== null) {
+  while ((match = regex.exec(normalized)) !== null) {
     const letter = match[1].toUpperCase();
-    const text = match[2].trim();
+    const text = match[2].trim().replace(/^[:.-]\s*/, '');
     if (['A', 'B', 'C', 'D'].includes(letter) && text.length > 0) {
       results.push({ letter, text });
     }
   }
+
+  // Also support no space after dot e.g. A.Samson
+  if (results.length === 0) {
+    const noSpaceRegex = /(?:^|\s+)(?:option\s+)?(?:\(|\[)?([A-Da-d])(?:\)|\]|\.|\:|-)\s*([^\n\r]+)/i;
+    const m = normalized.match(noSpaceRegex);
+    if (m) {
+      const letter = m[1].toUpperCase();
+      const text = m[2].trim();
+      if (['A', 'B', 'C', 'D'].includes(letter) && text.length > 0) {
+        results.push({ letter, text });
+      }
+    }
+  }
+
   return results;
 }
+
+const DOCUMENT_HEADER_PATTERNS = [
+  /^\s*technical\s+bible\s+questions/i,
+  /^\s*bible\s+quiz\s+(template|compilation|questions)/i,
+  /^\s*multiple\s+choice\s+(questions|quiz)/i,
+  /^\s*dlcf\s+afit/i,
+  /^\s*instructions?\s*[:\-]/i,
+  /^\s*page\s+\d+(\s+of\s+\d+)?$/i,
+];
 
 /**
  * Parses raw extracted text into structured QuestionInput objects
@@ -153,7 +199,7 @@ export function parseQuestionsFromRawText(rawText: string): {
   const lines = rawText
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+    .filter((l) => l.length > 0 && !DOCUMENT_HEADER_PATTERNS.some((pattern) => pattern.test(l)));
 
   const questions: QuestionInput[] = [];
   const errors: string[] = [];
@@ -336,6 +382,17 @@ export function parseQuestionsFromRawText(rawText: string): {
     const scriptureMatch = line.match(BIBLE_REF_REGEX);
     if (scriptureMatch && !currentQ.scriptureRef) {
       currentQ.scriptureRef = scriptureMatch[1].trim();
+    }
+
+    // If prompt already looks complete or options have started, capture plain lines as options
+    if (
+      (currentQ.options.length > 0 || currentQ.prompt.includes('?') || currentQ.prompt.length > 50) &&
+      currentQ.options.length < 4 &&
+      line.length < 150
+    ) {
+      const letter = ['A', 'B', 'C', 'D'][currentQ.options.length];
+      currentQ.options.push({ letter, text: line });
+      continue;
     }
 
     // Append to prompt if options not yet started

@@ -266,7 +266,7 @@ export function parseQuestionsFromRawText(
   };
 
   const isAnswerLine = (line: string) => {
-    return /^(correct\s*answer|correct\s*option|correct|answer|ans|key)[\s.:=]/i.test(line);
+    return /^(?:[-*•\s]*)?(?:correct\s*answer|correct\s*option|correct|answer|ans|key)[\s.:=]/i.test(line);
   };
 
   const isScriptureLine = (line: string) => {
@@ -388,30 +388,22 @@ export function parseQuestionsFromRawText(
 
     if (!currentQ) continue;
 
-    // Check if line contains one or multiple options (e.g. A. ... B. ...)
-    const extractedOpts = extractOptionsFromText(line);
-    if (extractedOpts.length > 0) {
-      for (const opt of extractedOpts) {
-        // Replace or add
-        const existingIdx = currentQ.options.findIndex((o) => o.letter === opt.letter);
-        if (existingIdx !== -1) {
-          currentQ.options[existingIdx] = opt;
-        } else {
-          currentQ.options.push(opt);
-        }
-      }
-      continue;
-    }
-
+    // 1. Check if line is an ANSWER line FIRST before options!
     if (isAnswerLine(line)) {
       const ansPart = line
-        .replace(/^(correct\s*answer|correct\s*option|correct|answer|ans|key)[\s.:=]*/i, '')
+        .replace(/^(?:.*?)?(?:correct\s*answer|correct\s*option|correct|answer|ans|key)[\s.:=]*/i, '')
         .trim();
 
-      const letterMatch = ansPart.match(/\b([A-D])\b/i);
+      const letterMatch =
+        ansPart.match(/^([A-Da-d])(?:[\s.):-]|$)/i) ||
+        ansPart.match(/\b([A-Da-d])\b/i);
+
       if (letterMatch) {
         const letter = letterMatch[1].toUpperCase();
-        currentQ.correctIndex = ['A', 'B', 'C', 'D'].indexOf(letter);
+        const idx = ['A', 'B', 'C', 'D'].indexOf(letter);
+        if (idx !== -1) {
+          currentQ.correctIndex = idx;
+        }
       } else {
         // Try matching text of option
         const matchIdx = currentQ.options.findIndex(
@@ -428,6 +420,21 @@ export function parseQuestionsFromRawText(
       const scriptureMatch = line.match(BIBLE_REF_REGEX);
       if (scriptureMatch && !currentQ.scriptureRef) {
         currentQ.scriptureRef = scriptureMatch[1].trim();
+      }
+      continue;
+    }
+
+    // 2. Check if line contains one or multiple options (e.g. A. ... B. ...)
+    const extractedOpts = extractOptionsFromText(line);
+    if (extractedOpts.length > 0) {
+      for (const opt of extractedOpts) {
+        // Replace or add
+        const existingIdx = currentQ.options.findIndex((o) => o.letter === opt.letter);
+        if (existingIdx !== -1) {
+          currentQ.options[existingIdx] = opt;
+        } else {
+          currentQ.options.push(opt);
+        }
       }
       continue;
     }

@@ -78,6 +78,14 @@ export default function HostSetupPage() {
         return;
       }
 
+      if (data.hostSecret) {
+        try {
+          localStorage.setItem(`dlcf_host_secret_${data.pin}`, data.hostSecret);
+        } catch {
+          // ignore localStorage error
+        }
+      }
+
       // Show Recovery Key modal
       setCreatedRoomInfo({
         pin: data.pin,

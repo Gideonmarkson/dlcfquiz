@@ -106,7 +106,15 @@ ALTER TABLE public.questions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.players ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.answers ENABLE ROW LEVEL SECURITY;
 
--- Deny direct anon table reads so correct_option_index & host_secret_hash can NEVER leak via Supabase PostgREST
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon;
+  END IF;
+END
+$$;
+
+-- Deny direct anon table reads so correct_option_index & host_secret_hash can NEVER leak via PostgREST
 CREATE POLICY "deny_anon_rooms" ON public.rooms FOR ALL TO anon USING (false);
 CREATE POLICY "deny_anon_questions" ON public.questions FOR ALL TO anon USING (false);
 CREATE POLICY "deny_anon_players" ON public.players FOR ALL TO anon USING (false);

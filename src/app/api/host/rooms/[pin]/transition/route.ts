@@ -16,6 +16,7 @@ import {
   mockGetPlayers,
   mockGetAnswersForQuestion,
 } from '@/lib/mockDb';
+import { isNeonAvailable, transitionRoomInNeon } from '@/lib/db/neonService';
 
 export async function POST(
   req: NextRequest,
@@ -37,6 +38,54 @@ export async function POST(
     let revealedAnswer: RevealedAnswerDTO | undefined;
     let top5Entries: LeaderboardEntryDTO[] | undefined;
     let podiumEntries: LeaderboardEntryDTO[] | undefined;
+
+    // 1. Neon Database Transition Path
+    if (isNeonAvailable()) {
+      try {
+        const neonRes = await transitionRoomInNeon({
+          pin,
+          targetState,
+          questionIndex,
+          hostSecret: secret,
+          recoveryCode,
+        });
+
+        if (neonRes.success && neonRes.room) {
+          const room = neonRes.room;
+          if (room.status === 'QUESTION_ACTIVE' && room.question_started_at && neonRes.publicQuestion) {
+            questionEndsAtMs =
+              new Date(room.question_started_at).getTime() +
+              neonRes.publicQuestion.timeLimitSec * 1000;
+          }
+
+          await broadcastToRoom(pin, 'state_change', {
+            status: targetState,
+            currentQuestionIndex: room.current_question_index,
+            serverNowMs,
+            questionEndsAtMs,
+            question: neonRes.publicQuestion,
+            reveal: neonRes.revealedAnswer,
+            top5: neonRes.top5,
+            podium: neonRes.podium,
+          });
+
+          return NextResponse.json({
+            status: room.status,
+            currentQuestionIndex: room.current_question_index,
+            serverNowMs,
+            questionEndsAtMs,
+            question: neonRes.publicQuestion,
+            reveal: neonRes.revealedAnswer,
+            top5: neonRes.top5,
+            podium: neonRes.podium,
+          });
+        } else if (neonRes.error) {
+          return NextResponse.json({ error: neonRes.error }, { status: neonRes.statusCode });
+        }
+      } catch (neonErr) {
+        console.warn('Neon transition error, falling back:', neonErr);
+      }
+    }
 
     // Check Mock DB fallback
     const mockRoom = mockGetRoomByPin(pin);

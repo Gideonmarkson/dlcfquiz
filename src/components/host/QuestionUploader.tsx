@@ -9,7 +9,7 @@ import {
   SAMPLE_CSV_TEMPLATE,
   SAMPLE_JSON_TEMPLATE,
 } from '@/lib/questionParser';
-import { extractTextFromPdf, parseQuestionsFromRawText } from '@/lib/pdfExtractor';
+import { extractQuestionsFromPdfFile, parseQuestionsFromRawText } from '@/lib/pdfExtractor';
 import { generateSamplePdfBytes } from '@/lib/pdfTemplateGenerator';
 import { SAMPLE_BIBLE_QUESTIONS } from '@/lib/sampleQuestions';
 
@@ -43,17 +43,8 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
 
     try {
       if (isPdf) {
-        // Extract text from PDF
-        const text = await extractTextFromPdf(file);
-        if (!text || text.trim().length === 0) {
-          setParseErrors([
-            'Could not extract text from this PDF. If this is a scanned image, please copy the text into a Word document or use the PDF template.',
-          ]);
-          setIsProcessing(false);
-          return;
-        }
-
-        const parseResult = parseQuestionsFromRawText(text);
+        // Extract questions directly via server engine & fallback
+        const parseResult = await extractQuestionsFromPdfFile(file);
         if (parseResult.success && parseResult.questions.length > 0) {
           setSuccessCount(parseResult.questions.length);
           onQuestionsLoaded(parseResult.questions);

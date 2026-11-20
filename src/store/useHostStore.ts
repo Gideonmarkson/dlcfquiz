@@ -115,11 +115,17 @@ export const useHostStore = create<HostStore>((set, get) => ({
       current.channel.unsubscribe();
     }
 
-    // 1. Automatic Realtime Sync Heartbeat (1s interval)
-    // Ensures real-time responsiveness even without Supabase config
+    // 1. Automatic Realtime Sync Heartbeat (1.2s interval with host auth)
     const pollInterval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/host/rooms/${pin}`);
+        const secret =
+          typeof window !== 'undefined'
+            ? localStorage.getItem(`dlcf_host_secret_${pin}`)
+            : null;
+        const headers: Record<string, string> = {};
+        if (secret) headers['x-host-secret'] = secret;
+
+        const res = await fetch(`/api/host/rooms/${pin}`, { headers });
         if (!res.ok) return;
         const data = await res.json();
         if (!data || !data.room) return;
@@ -149,7 +155,7 @@ export const useHostStore = create<HostStore>((set, get) => ({
       } catch {
         // network jitter, silent
       }
-    }, 1000);
+    }, 1200);
 
     // 2. Supabase Realtime Broadcast Channel
     const roomChannel = supabaseBrowser.channel(`room:${pin}`, {

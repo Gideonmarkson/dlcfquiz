@@ -32,13 +32,25 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
+  // Helper for authenticated host calls
+  const getHostHeaders = () => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (typeof window !== 'undefined') {
+      const secret = localStorage.getItem(`dlcf_host_secret_${pin}`);
+      if (secret) headers['x-host-secret'] = secret;
+    }
+    return headers;
+  };
+
   // 1. Hydrate Initial State from Server
   useEffect(() => {
     let isMounted = true;
 
     async function loadRoomSnapshot() {
       try {
-        const res = await fetch(`/api/host/rooms/${pin}`);
+        const res = await fetch(`/api/host/rooms/${pin}`, {
+          headers: getHostHeaders(),
+        });
         if (!res.ok) {
           if (res.status === 401) {
             setErrorMessage('Unauthorized host session. Please create or resume from host setup.');
@@ -106,7 +118,7 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
     try {
       const res = await fetch(`/api/host/rooms/${pin}/transition`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHostHeaders(),
         body: JSON.stringify({
           targetState,
           questionIndex: qIdx,
@@ -124,6 +136,9 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
           podium: data.podium ?? [],
           answeredCount: 0,
         });
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error('Transition failed:', errData);
       }
     } catch (err) {
       console.error('Failed to transition state', err);

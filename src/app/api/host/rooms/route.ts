@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { generateRoomPin, generateRecoveryCode } from '@/lib/pinGenerator';
 import {
   generateHostSecret,
@@ -8,6 +7,7 @@ import {
 } from '@/lib/auth/hostAuth';
 import { QuestionsArraySchema } from '@/lib/questionParser';
 import { isUsingMockDb, mockCreateRoom, mockInsertQuestions } from '@/lib/mockDb';
+import { isNeonAvailable, createRoomInNeon } from '@/lib/db/neonService';
 
 export async function POST(req: NextRequest) {
   try {
@@ -30,60 +30,19 @@ export async function POST(req: NextRequest) {
     let roomId = '';
     let roomStatus = 'LOBBY';
 
-    if (isUsingMockDb()) {
-      // Local development fallback
-      const room = mockCreateRoom({
-        pin,
-        title: title.slice(0, 120),
-        host_secret_hash: hostSecretHash,
-        host_recovery_code: hostRecoveryCode,
-      });
-      mockInsertQuestions(room.id, validation.data);
-      roomId = room.id;
-      roomStatus = room.status;
-    } else {
+    if (isNeonAvailable()) {
       try {
-        const supabase = getSupabaseServerClient();
-        const { data: room, error: roomError } = await supabase
-          .from('rooms')
-          .insert({
-            pin,
-            title: title.slice(0, 120),
-            host_secret_hash: hostSecretHash,
-            host_recovery_code: hostRecoveryCode,
-            status: 'LOBBY',
-            current_question_index: -1,
-          })
-          .select()
-          .single();
-
-        if (roomError || !room) {
-          throw new Error(roomError?.message || 'Database error');
-        }
-
-        roomId = room.id;
-        roomStatus = room.status;
-
-        const questionRows = validation.data.map((q, idx) => ({
-          room_id: room.id,
-          order_index: idx,
-          prompt: q.prompt,
-          option_a: q.options[0],
-          option_b: q.options[1],
-          option_c: q.options[2],
-          option_d: q.options[3],
-          correct_option_index: q.correctOptionIndex,
-          scripture_ref: q.scriptureRef,
-          explanation: q.explanation || null,
-          time_limit_sec: q.timeLimitSec,
-        }));
-
-        const { error: qError } = await supabase.from('questions').insert(questionRows);
-        if (qError) {
-          throw new Error('Failed to store questions: ' + qError.message);
-        }
-      } catch (dbErr) {
-        console.warn('Supabase insert failed, falling back to local memory store:', dbErr);
+        const neonResult = await createRoomInNeon({
+          pin,
+          title: title.slice(0, 120),
+          hostSecretHash,
+          hostRecoveryCode,
+          questions: validation.data,
+        });
+        roomId = neonResult.room.id;
+        roomStatus = neonResult.room.status;
+      } catch (neonErr) {
+        console.error('Neon room creation failed, falling back to mock store:', neonErr);
         const room = mockCreateRoom({
           pin,
           title: title.slice(0, 120),
@@ -94,6 +53,17 @@ export async function POST(req: NextRequest) {
         roomId = room.id;
         roomStatus = room.status;
       }
+    } else {
+      // Local development fallback
+      const room = mockCreateRoom({
+        pin,
+        title: title.slice(0, 120),
+        host_secret_hash: hostSecretHash,
+        host_recovery_code: hostRecoveryCode,
+      });
+      mockInsertQuestions(room.id, validation.data);
+      roomId = room.id;
+      roomStatus = room.status;
     }
 
     const response = NextResponse.json(
@@ -102,6 +72,7 @@ export async function POST(req: NextRequest) {
         pin,
         title,
         recoveryCode: hostRecoveryCode,
+        hostSecret,
         status: roomStatus,
         questionCount: validation.data.length,
       },

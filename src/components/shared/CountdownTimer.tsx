@@ -118,31 +118,34 @@ export const CountdownTimer: React.FC<CountdownTimerProps> = ({
           aria-live="assertive"
           className="fixed inset-0 z-50 pointer-events-none flex flex-col items-center justify-center overflow-hidden"
         >
-          {/* Pulsing Full-Screen Emergency Edge Border */}
-          <div className="absolute inset-0 border-8 md:border-[16px] border-red-500/80 shadow-[inset_0_0_120px_rgba(239,68,68,0.55)] animate-pulse pointer-events-none" />
+          {/* Uniform Red Fill & Texture Across the Entire Viewport (No corner borders) */}
+          <div className="absolute inset-0 bg-red-600/95 backdrop-blur-sm pointer-events-none transition-opacity duration-200" />
 
-          {/* Vignette Backdrop */}
-          <div className="absolute inset-0 bg-red-950/20 backdrop-blur-[1px] pointer-events-none" />
-
-          {/* Top Emergency Low Time Banner */}
-          <div className="absolute top-4 sm:top-6 px-4 py-1.5 sm:px-6 sm:py-2 rounded-full bg-red-600 border border-red-400 text-white font-black text-xs sm:text-base md:text-lg uppercase tracking-widest shadow-2xl flex items-center gap-2 animate-bounce">
-            <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-amber-300 animate-pulse" />
+          {/* Top Emergency Low Time Badge */}
+          <div className="relative z-10 px-5 py-2 sm:px-7 sm:py-2.5 rounded-full bg-red-800/95 text-white font-black text-xs sm:text-base md:text-lg uppercase tracking-widest shadow-2xl flex items-center gap-2.5 animate-bounce mb-3">
+            <AlertTriangle className="w-5 h-5 text-amber-300 animate-pulse shrink-0" />
             <span>
               {isHost
-                ? `LOW TIME ALERT — FINAL ${remainingSeconds} SECONDS!`
+                ? `FINAL ${remainingSeconds} SECONDS!`
                 : `HURRY! ONLY ${remainingSeconds}S REMAINING!`}
             </span>
           </div>
 
-          {/* Massive Full-Screen Bold Countdown Number */}
+          {/* Ultra-Thick High-Contrast Countdown Number */}
           <div
             key={remainingSeconds}
-            className="flex flex-col items-center justify-center select-none animate-timer-pop"
+            className="relative z-10 flex flex-col items-center justify-center select-none animate-timer-pop"
           >
-            <span className="font-mono font-black text-[34vw] md:text-[28vw] xl:text-[24vw] leading-none text-red-500/85 drop-shadow-[0_0_90px_rgba(239,68,68,0.95)] tabular-nums">
+            <span
+              className="font-black text-[42vw] md:text-[36vw] xl:text-[30vw] leading-none text-white tabular-nums tracking-tighter drop-shadow-[0_16px_50px_rgba(0,0,0,0.7)]"
+              style={{
+                WebkitTextStroke: '4px rgba(153, 27, 27, 0.8)',
+                paintOrder: 'stroke fill',
+              }}
+            >
               {remainingSeconds}
             </span>
-            <span className="text-xs sm:text-base md:text-2xl font-black uppercase tracking-[0.35em] text-red-300 drop-shadow-md -mt-3 sm:-mt-6 md:-mt-10">
+            <span className="text-sm sm:text-xl md:text-2xl font-black uppercase tracking-[0.35em] text-white/95 drop-shadow-[0_2px_12px_rgba(0,0,0,0.5)] -mt-4 sm:-mt-8 md:-mt-12">
               Seconds Remaining
             </span>
           </div>

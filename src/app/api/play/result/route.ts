@@ -7,6 +7,7 @@ import {
   mockGetAnswersForQuestion,
   mockGetPlayers,
 } from '@/lib/mockDb';
+import { isNeonAvailable, getPlayerResultFromNeon } from '@/lib/db/neonService';
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,6 +18,18 @@ export async function GET(req: NextRequest) {
 
     if (!pin || !playerToken) {
       return NextResponse.json({ error: 'Missing PIN or player token' }, { status: 400 });
+    }
+
+    // 1. Neon Database Result Path
+    if (isNeonAvailable()) {
+      try {
+        const result = await getPlayerResultFromNeon(pin, playerToken, questionId);
+        if (result) {
+          return NextResponse.json(result);
+        }
+      } catch (neonErr) {
+        console.warn('Neon getPlayerResult error, falling back:', neonErr);
+      }
     }
 
     const mockRoom = mockGetRoomByPin(pin);

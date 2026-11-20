@@ -9,6 +9,7 @@ import {
   mockGetAnswersForQuestion,
   mockGetPlayers,
 } from '@/lib/mockDb';
+import { isNeonAvailable, getPlayerSessionFromNeon } from '@/lib/db/neonService';
 
 export async function GET(req: NextRequest) {
   try {
@@ -21,6 +22,21 @@ export async function GET(req: NextRequest) {
         { error: 'Missing PIN or X-Player-Token header' },
         { status: 400 }
       );
+    }
+
+    // 1. Neon Database Session Path (Single Round-Trip Query)
+    if (isNeonAvailable()) {
+      try {
+        const neonSession = await getPlayerSessionFromNeon(pin, playerToken);
+        if (neonSession) {
+          if ('kicked' in neonSession && neonSession.kicked) {
+            return NextResponse.json({ error: 'Player kicked' }, { status: 403 });
+          }
+          return NextResponse.json(neonSession);
+        }
+      } catch (neonErr) {
+        console.warn('Neon getPlayerSession error, falling back:', neonErr);
+      }
     }
 
     const mockRoom = mockGetRoomByPin(pin);

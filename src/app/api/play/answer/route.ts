@@ -7,6 +7,7 @@ import {
   mockGetRoomByPin,
   mockSubmitAnswer,
 } from '@/lib/mockDb';
+import { isNeonAvailable, submitAnswerInNeon } from '@/lib/db/neonService';
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing X-Player-Token header' }, { status: 401 });
     }
 
-    const rateCheck = checkRateLimit(`ans:${playerToken}`, 5, 10000);
+    const rateCheck = checkRateLimit(`ans:${playerToken}`, 20, 10000);
     if (!rateCheck.allowed) {
       return NextResponse.json({ error: 'Too many answer requests' }, { status: 429 });
     }
@@ -29,6 +30,39 @@ export async function POST(req: NextRequest) {
 
     if (!pin || !questionId || selectedOption === undefined || ![0, 1, 2, 3].includes(selectedOption)) {
       return NextResponse.json({ error: 'Invalid answer submission payload' }, { status: 400 });
+    }
+
+    // 1. Neon Database Answer Path
+    if (isNeonAvailable()) {
+      try {
+        const neonAns = await submitAnswerInNeon({
+          pin,
+          playerToken,
+          questionId,
+          selectedOption,
+        });
+
+        if (neonAns.accepted) {
+          broadcastToRoom(pin, 'timer_sync', {
+            serverNowMs: Date.now(),
+            questionEndsAtMs: 0,
+            answeredCount: neonAns.answeredCount || 0,
+            totalPlayers: 0,
+          });
+
+          return NextResponse.json(
+            {
+              accepted: true,
+              lockedOption: neonAns.lockedOption,
+            },
+            { status: 200 }
+          );
+        } else if (neonAns.errorCode) {
+          return NextResponse.json({ error: neonAns.errorCode }, { status: 400 });
+        }
+      } catch (neonErr) {
+        console.warn('Neon submitAnswer error, falling back:', neonErr);
+      }
     }
 
     const mockRoom = mockGetRoomByPin(pin);

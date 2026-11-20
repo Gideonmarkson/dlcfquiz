@@ -9,16 +9,18 @@ import {
   mockAddPlayer,
   mockGetPlayers,
 } from '@/lib/mockDb';
+import { isNeonAvailable, joinPlayerInNeon } from '@/lib/db/neonService';
 
-const RATE_LIMIT_PER_MIN = parseInt(process.env.JOIN_RATE_LIMIT_PER_MIN || '150', 10);
+const RATE_LIMIT_PER_MIN = parseInt(process.env.JOIN_RATE_LIMIT_PER_MIN || '5000', 10);
 
 export async function POST(req: NextRequest) {
   try {
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'anonymous';
+    // Generous rate limit (5,000/min) ensures 200+ students on the same fellowship Wi-Fi router join smoothly
     const rateCheck = checkRateLimit(`join:${ip}`, RATE_LIMIT_PER_MIN, 60000);
     if (!rateCheck.allowed) {
       return NextResponse.json(
-        { error: 'Rate limit exceeded. Please wait a moment before joining.' },
+        { error: 'Connection busy. Please tap join again in a few seconds.' },
         { status: 429 }
       );
     }
@@ -48,6 +50,55 @@ export async function POST(req: NextRequest) {
     const selectedLevel: AcademicLevel = VALID_LEVELS.includes(academicLevel as AcademicLevel)
       ? (academicLevel as AcademicLevel)
       : '100L';
+
+    // 1. Neon Database Join Path
+    if (isNeonAvailable()) {
+      try {
+        const joinResult = await joinPlayerInNeon({
+          pin,
+          nickname: cleanNick,
+          academicLevel: selectedLevel,
+          existingToken,
+        });
+
+        if (joinResult.success && joinResult.player) {
+          const p = joinResult.player;
+          await broadcastToRoom(pin, 'lobby_update', {
+            action: 'join',
+            player: {
+              id: p.id,
+              nickname: p.nickname,
+              academicLevel: p.academic_level,
+            },
+            totalPlayers: joinResult.totalPlayers || 1,
+          });
+
+          return NextResponse.json(
+            {
+              playerId: p.id,
+              playerToken: p.player_token,
+              pin,
+              nickname: p.nickname,
+              academicLevel: p.academic_level,
+              totalScore: p.total_score,
+              resumed: joinResult.resumed || false,
+            },
+            { status: joinResult.statusCode }
+          );
+        } else if (joinResult.error) {
+          return NextResponse.json(
+            {
+              error: joinResult.error,
+              suggestedNickname:
+                joinResult.statusCode === 409 ? `${cleanNick}_${selectedLevel}` : undefined,
+            },
+            { status: joinResult.statusCode }
+          );
+        }
+      } catch (neonErr) {
+        console.warn('Neon join failed, falling back to mock:', neonErr);
+      }
+    }
 
     // Mock DB Fallback
     const mockRoom = mockGetRoomByPin(pin);

@@ -68,13 +68,13 @@ const PodiumStep: React.FC<{ entry?: LeaderboardEntryDTO; place: Place }> = ({ e
         <div className="relative">
           {place === 1 ? (
             <Crown
-              className="crown-drop absolute -top-12 left-1/2 h-12 w-12 -translate-x-1/2 text-gilt"
+              className="crown-drop absolute inset-x-0 -top-12 mx-auto h-12 w-12 text-gilt"
               style={{ animationDelay: `${s.delay + 0.9}s` }}
               fill="currentColor"
               strokeWidth={1.25}
             />
           ) : (
-            <Medal className="absolute -top-9 left-1/2 h-8 w-8 -translate-x-1/2" style={{ color: s.ring }} />
+            <Medal className="absolute inset-x-0 -top-9 mx-auto h-8 w-8" style={{ color: s.ring }} />
           )}
           <div
             className={`flex items-center justify-center rounded-full bg-cover font-extrabold text-page ${
@@ -188,25 +188,6 @@ export const HostPodiumView: React.FC = () => {
 
       {/* The stage */}
       <div className="relative pt-16">
-        {/* Spotlights */}
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 -top-24 bottom-0">
-          {[16.5, 50, 83.5].map((x, i) => (
-            <div
-              key={x}
-              className="spotlight absolute top-0 h-full w-[34%] -translate-x-1/2"
-              style={{
-                left: `${x}%`,
-                animationDelay: `${[0.6, 1.1, 0.2][i]}s`,
-                background:
-                  i === 1
-                    ? 'linear-gradient(180deg, rgba(246,227,161,0.32), rgba(246,227,161,0.04) 85%)'
-                    : 'linear-gradient(180deg, rgba(241,236,223,0.18), rgba(241,236,223,0.02) 85%)',
-                clipPath: 'polygon(42% 0, 58% 0, 100% 100%, 0 100%)',
-              }}
-            />
-          ))}
-        </div>
-
         <div className="relative grid grid-cols-3 items-end gap-3 md:gap-5">
           <PodiumStep entry={top[1]} place={2} />
           <PodiumStep entry={top[0]} place={1} />

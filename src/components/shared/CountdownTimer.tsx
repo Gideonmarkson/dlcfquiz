@@ -105,8 +105,17 @@ export const CountdownTimer: React.FC<CountdownTimerProps> = ({
         </span>
       </div>
 
+      {/* Last 10 seconds: a huge countdown over the screen. pointer-events-none keeps
+          every answer tappable through it, and it's translucent so options stay readable. */}
       {showFullScreenLowTimeOverlay && isUrgent && (
-        <div aria-hidden className="pointer-events-none fixed inset-0 z-10 ring-[6px] ring-inset ring-ribbon/40" />
+        <div aria-hidden className="pointer-events-none fixed inset-0 z-20 flex items-center justify-center">
+          <span
+            key={seconds}
+            className="animate-timer-pop font-sans font-extrabold leading-none tabular-nums text-ribbon opacity-45 text-[clamp(12rem,72vw,30rem)] [text-shadow:0_0_40px_rgba(20,23,53,0.6)]"
+          >
+            {seconds}
+          </span>
+        </div>
       )}
     </>
   );

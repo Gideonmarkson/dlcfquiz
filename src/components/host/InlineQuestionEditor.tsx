@@ -20,7 +20,11 @@ export const InlineQuestionEditor: React.FC<InlineQuestionEditorProps> = ({
 }) => {
   const updateQuestion = (index: number, updated: Partial<QuestionInput>) => {
     const next = [...questions];
-    next[index] = { ...next[index], ...updated };
+    // Editing the question, answers or scripture makes an old note stale, so clear it
+    // and let the AI write a fresh one when the game opens.
+    const changesContent =
+      'prompt' in updated || 'options' in updated || 'correctOptionIndex' in updated || 'scriptureRef' in updated;
+    next[index] = { ...next[index], ...updated, ...(changesContent ? { explanation: '' } : {}) };
     onChange(next);
   };
 
@@ -165,7 +169,7 @@ export const InlineQuestionEditor: React.FC<InlineQuestionEditorProps> = ({
               </div>
             </fieldset>
 
-            <div className="grid gap-3 md:grid-cols-[1fr_2fr_auto]">
+            <div className="grid gap-3 md:grid-cols-[1fr_auto]">
               <div className="flex flex-col gap-1.5">
                 <label htmlFor={`q-${idx}-ref`} className={ui.label}>
                   Scripture
@@ -176,19 +180,6 @@ export const InlineQuestionEditor: React.FC<InlineQuestionEditorProps> = ({
                   value={q.scriptureRef}
                   onChange={(e) => updateQuestion(idx, { scriptureRef: e.target.value })}
                   placeholder="e.g. 2 Timothy 2:15"
-                  className={fieldClass}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor={`q-${idx}-note`} className={ui.label}>
-                  Note shown with the answer <span className="text-faint">(optional)</span>
-                </label>
-                <input
-                  id={`q-${idx}-note`}
-                  type="text"
-                  value={q.explanation || ''}
-                  onChange={(e) => updateQuestion(idx, { explanation: e.target.value })}
-                  placeholder="e.g. Paul’s final charge to Timothy, written from Rome."
                   className={fieldClass}
                 />
               </div>
@@ -210,6 +201,17 @@ export const InlineQuestionEditor: React.FC<InlineQuestionEditorProps> = ({
                 </select>
               </div>
             </div>
+
+            <p className="text-sm leading-relaxed text-muted">
+              {q.explanation?.trim() ? (
+                <>
+                  <span className="text-faint">Note shown with the answer: </span>
+                  {q.explanation}
+                </>
+              ) : (
+                <span className="text-faint">AI writes the note shown with the answer when you open the game.</span>
+              )}
+            </p>
           </li>
         ))}
       </ol>

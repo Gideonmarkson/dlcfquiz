@@ -8,11 +8,12 @@ import {
 import { QuestionsArraySchema } from '@/lib/questionParser';
 import { isUsingMockDb, mockCreateRoom, mockInsertQuestions } from '@/lib/mockDb';
 import { isNeonAvailable, createRoomInNeon } from '@/lib/db/neonService';
+import { fillMissingAnswerNotes } from '@/lib/answerNotes';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { title = 'DLCF AFIT Live Bible Quiz', questions = [] } = body;
+    const { title = 'DLCF AFIT Live Bible Quiz', questions = [], geminiKey } = body;
 
     const validation = QuestionsArraySchema.safeParse(questions);
     if (!validation.success) {
@@ -21,6 +22,13 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    // AI writes the reveal note for any question that doesn't already have one.
+    const { questions: questionsWithNotes, generated: notesGenerated } = await fillMissingAnswerNotes(
+      validation.data,
+      typeof geminiKey === 'string' ? geminiKey : null
+    );
+    validation.data.splice(0, validation.data.length, ...questionsWithNotes);
 
     const pin = generateRoomPin();
     const hostSecret = generateHostSecret();
@@ -89,6 +97,7 @@ export async function POST(req: NextRequest) {
         hostSecret,
         status: roomStatus,
         questionCount: validation.data.length,
+        notesGenerated,
       },
       { status: 201 }
     );

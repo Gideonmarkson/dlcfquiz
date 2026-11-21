@@ -3,11 +3,13 @@
 import React from 'react';
 import { usePlayerStore } from '@/store/usePlayerStore';
 import { OPTION_LETTERS } from '@/lib/ui';
+import { AnswerBarChart } from '@/components/shared/AnswerBarChart';
 import { ordinal } from '@/components/player/PlayerStatusHeader';
 
 export const PlayerResultCard: React.FC = () => {
   const result = usePlayerStore((s) => s.result);
   const reveal = usePlayerStore((s) => s.reveal);
+  const activeQuestion = usePlayerStore((s) => s.activeQuestion);
   const selectedOption = usePlayerStore((s) => s.selectedOption);
 
   if (!reveal) return null;
@@ -32,11 +34,21 @@ export const PlayerResultCard: React.FC = () => {
         </p>
       </div>
 
+      {activeQuestion && activeQuestion.id === reveal.questionId && reveal.optionCounts && (
+        <AnswerBarChart
+          size="phone"
+          options={activeQuestion.options}
+          counts={reveal.optionCounts}
+          correctIndex={reveal.correctOptionIndex}
+          myOption={selectedOption}
+        />
+      )}
+
       <ScriptureNote reference={reveal.scriptureRef} explanation={reveal.explanation} />
 
       {rank ? (
         <p className="text-lg text-muted">
-          You’re <span className="text-page tabular-nums">{ordinal(rank)}</span>
+          You’re <span className="font-extrabold text-page tabular-nums">{ordinal(rank)}</span>
           {totalPlayers ? <span className="tabular-nums"> of {totalPlayers}</span> : null}
           {result?.cumulativeScore !== undefined ? (
             <> with <span className="text-page tabular-nums">{result.cumulativeScore.toLocaleString()}</span> points.</>

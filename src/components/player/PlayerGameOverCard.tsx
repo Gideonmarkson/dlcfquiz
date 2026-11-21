@@ -24,7 +24,7 @@ export const PlayerGameOverCard: React.FC = () => {
       <div>
         <p className="text-sm text-muted">That’s the last question, {nickname}</p>
         {finalRank ? (
-          <h1 className="mt-2 font-display text-6xl leading-none">
+          <h1 className="mt-2 font-sans text-7xl font-extrabold leading-none tabular-nums">
             {ordinal(finalRank)}
             <span className="block mt-2 font-sans text-xl text-muted tabular-nums">
               {totalPlayers ? `out of ${totalPlayers} players` : 'place'}

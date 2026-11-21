@@ -36,7 +36,7 @@ export const PlayerResultCard: React.FC = () => {
 
       {rank ? (
         <p className="text-lg text-muted">
-          You’re <span className="text-page tabular-nums">{ordinal(rank)}</span>
+          You’re <span className="font-extrabold text-page tabular-nums">{ordinal(rank)}</span>
           {totalPlayers ? <span className="tabular-nums"> of {totalPlayers}</span> : null}
           {result?.cumulativeScore !== undefined ? (
             <> with <span className="text-page tabular-nums">{result.cumulativeScore.toLocaleString()}</span> points.</>

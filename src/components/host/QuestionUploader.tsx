@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileText, Download, Sparkles, AlertCircle, RefreshCw, FileCheck, Bot, Key, Check } from 'lucide-react';
+import { Upload } from 'lucide-react';
+import { ui } from '@/lib/ui';
 import { QuestionInput } from '@/types/quiz';
 import {
   parseQuestionsFromCSV,
@@ -58,7 +59,7 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
     const isTxt = fileName.endsWith('.txt');
 
     if (!isPdf && !isCsv && !isJson && !isTxt) {
-      setParseErrors(['Please upload a valid .pdf, .csv, or .json file.']);
+      setParseErrors(['That file type isn’t supported. Upload a .pdf, .csv, .json or .txt file.']);
       return;
     }
 
@@ -77,7 +78,7 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
           setParseErrors(
             parseResult.errors.length > 0
               ? parseResult.errors
-              : ['No questions could be identified in this PDF. Please verify format matches template.']
+              : ['No questions were found in this PDF. Compare it with the PDF template below.']
           );
         }
       } else if (isTxt) {
@@ -153,10 +154,16 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
     document.body.removeChild(link);
   };
 
+  const usingOwnKey = geminiKey.trim().length > 10;
+
   return (
-    <div className="flex flex-col gap-4 w-full">
-      {/* Dropzone Container */}
+    <div className="flex w-full flex-col gap-4">
       <div
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && !isProcessing) fileInputRef.current?.click();
+        }}
         onDragOver={(e) => {
           e.preventDefault();
           setIsDragging(true);
@@ -164,10 +171,8 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
         onClick={() => !isProcessing && fileInputRef.current?.click()}
-        className={`border-2 border-dashed rounded-3xl p-6 md:p-8 text-center cursor-pointer transition-all duration-200 flex flex-col items-center justify-center gap-3 ${
-          isDragging
-            ? 'border-amber-400 bg-amber-500/10 scale-[1.01]'
-            : 'border-slate-700 bg-slate-800/40 hover:border-slate-500 hover:bg-slate-800/70'
+        className={`flex cursor-pointer items-center gap-5 rounded-[var(--radius-tile)] border border-dashed p-6 transition-colors ${
+          isDragging ? 'border-gilt bg-cover-2' : 'border-rule hover:border-faint hover:bg-cover'
         }`}
       >
         <input
@@ -181,161 +186,92 @@ export const QuestionUploader: React.FC<QuestionUploaderProps> = ({ onQuestionsL
             }
           }}
         />
-
-        <div className="w-14 h-14 rounded-2xl bg-amber-500/15 text-amber-400 flex items-center justify-center shadow-inner">
-          {isProcessing ? (
-            <RefreshCw className="w-7 h-7 animate-spin text-amber-400" />
-          ) : (
-            <Upload className="w-7 h-7" />
-          )}
-        </div>
-
-        <div className="flex flex-col items-center gap-1.5">
-          <div className="flex items-center justify-center gap-2 flex-wrap">
-            <h3 className="font-extrabold text-slate-100 text-lg md:text-xl">
-              Upload Question Bank
-            </h3>
-            <div className="flex items-center gap-1.5">
-              <span className="px-2.5 py-0.5 rounded-md bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-black tracking-wider">
-                PDF
-              </span>
-              <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-black tracking-wider">
-                CSV
-              </span>
-              <span className="px-2.5 py-0.5 rounded-md bg-blue-500/20 text-blue-400 border border-blue-500/30 text-xs font-black tracking-wider">
-                JSON
-              </span>
-            </div>
-          </div>
-          <p className="text-slate-300 text-xs md:text-sm max-w-lg leading-relaxed">
-            Drag & drop your compilation <span className="text-red-400 font-bold font-mono">.pdf</span>, <span className="text-emerald-400 font-bold font-mono">.csv</span>, or <span className="text-blue-400 font-bold font-mono">.json</span> file here, or click to browse
+        <Upload className={`h-7 w-7 shrink-0 ${isProcessing ? 'animate-pulse text-gilt' : 'text-muted'}`} />
+        <div>
+          <p className="text-lg font-medium">
+            {isProcessing ? 'Reading questions from your file…' : 'Upload your questions'}
           </p>
+          <p className="text-muted">Drop a PDF, CSV or JSON file here, or click to choose one.</p>
         </div>
-
-        {isProcessing && (
-          <span className="text-xs text-amber-300 font-semibold animate-pulse">
-            Extracting questions and correct answers from PDF...
-          </span>
-        )}
-
-        {successCount !== null && (
-          <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-3.5 py-1.5 rounded-full shadow-sm">
-            <FileCheck className="w-4 h-4 text-emerald-400" />
-            <span>
-              Loaded all {successCount} questions {totalPagesFound && totalPagesFound > 1 ? `across all ${totalPagesFound} pages ` : ''}
-              {parsedSource === 'gemini-ai' ? 'via Google Gemini AI!' : 'from document!'}
-            </span>
-          </div>
-        )}
       </div>
 
-      {/* Google AI (Gemini) Bar */}
-      <div className="flex flex-col gap-2 p-3 rounded-2xl bg-slate-900/60 border border-slate-700/60 text-xs">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2 text-slate-300 font-semibold">
-            <Bot className="w-4 h-4 text-amber-400" />
-            <span>Google Gemini AI Document Reader:</span>
-            <span
-              className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                geminiKey.trim().length > 10
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-              }`}
-            >
-              {geminiKey.trim().length > 10 ? 'Host Key Configured' : 'Env Variable / Auto Mode'}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowKeyInput(!showKeyInput)}
-            className="text-amber-400 hover:text-amber-300 font-medium underline transition"
-          >
-            {showKeyInput ? 'Hide Key Settings' : 'Configure Gemini Key'}
-          </button>
+      {successCount !== null && (
+        <p role="status" className="border-l-2 border-psalm pl-3 text-psalm">
+          Loaded {successCount} {successCount === 1 ? 'question' : 'questions'}
+          {totalPagesFound && totalPagesFound > 1 ? ` from ${totalPagesFound} pages` : ''}
+          {parsedSource === 'gemini-ai' ? ', read with Gemini.' : '.'} Check them below before you start.
+        </p>
+      )}
+
+      {parseErrors.length > 0 && (
+        <div role="alert" className="border-l-2 border-ribbon pl-3 text-sm text-[#f0a49d]">
+          <p className="font-medium">
+            {parseErrors.length === 1 ? 'There’s a problem with this file:' : `There are ${parseErrors.length} problems with this file:`}
+          </p>
+          <ul className="mt-1 list-inside list-disc space-y-0.5">
+            {parseErrors.slice(0, 5).map((err, i) => (
+              <li key={i}>{err}</li>
+            ))}
+            {parseErrors.length > 5 && <li>…and {parseErrors.length - 5} more.</li>}
+          </ul>
         </div>
+      )}
 
-        {showKeyInput && (
-          <div className="flex flex-col gap-2 pt-2 border-t border-slate-800">
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Gemini 2.5 Flash reads any PDF layout (tables, 2-column sheets, custom fonts) with multimodal AI.
-              Set in <code className="text-amber-300 font-mono">.env.local</code> or paste your key here:
-            </p>
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <Key className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="password"
-                  placeholder="AIzaSy... (Google AI Studio Key)"
-                  value={geminiKey}
-                  onChange={(e) => handleSaveKey(e.target.value)}
-                  className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-400 font-mono"
-                />
-              </div>
-              {keySaved && (
-                <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-bold">
-                  <Check className="w-3.5 h-3.5" /> Saved
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Action Row: Demo Pack & Templates */}
-      <div className="flex flex-wrap items-center justify-between gap-3 text-xs md:text-sm">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted">
+        <span>
+          Templates:{' '}
+          {(['pdf', 'csv', 'json'] as const).map((t, i) => (
+            <React.Fragment key={t}>
+              {i > 0 && ', '}
+              <button
+                type="button"
+                onClick={() => handleDownloadTemplate(t)}
+                className="text-page underline decoration-rule underline-offset-4 hover:decoration-gilt"
+              >
+                {t.toUpperCase()}
+              </button>
+            </React.Fragment>
+          ))}
+        </span>
         <button
           type="button"
           onClick={() => {
             setSuccessCount(SAMPLE_BIBLE_QUESTIONS.length);
             onQuestionsLoaded(SAMPLE_BIBLE_QUESTIONS);
           }}
-          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 font-semibold rounded-xl transition shadow-sm"
+          className="text-page underline decoration-rule underline-offset-4 hover:decoration-gilt"
         >
-          <Sparkles className="w-4 h-4" />
-          Load 5-Question AFIT Demo Set
+          Use the 5 sample questions
         </button>
-
-        <div className="flex items-center gap-2 flex-wrap text-slate-400">
-          <span className="font-semibold text-slate-300">Templates:</span>
-          <button
-            type="button"
-            onClick={() => handleDownloadTemplate('pdf')}
-            className="px-2.5 py-1 bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 rounded-lg font-bold flex items-center gap-1 transition"
-          >
-            <Download className="w-3.5 h-3.5" /> PDF
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDownloadTemplate('csv')}
-            className="px-2.5 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 rounded-lg font-bold flex items-center gap-1 transition"
-          >
-            <Download className="w-3.5 h-3.5" /> CSV
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDownloadTemplate('json')}
-            className="px-2.5 py-1 bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/30 rounded-lg font-bold flex items-center gap-1 transition"
-          >
-            <Download className="w-3.5 h-3.5" /> JSON
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowKeyInput(!showKeyInput)}
+          className="ml-auto text-page underline decoration-rule underline-offset-4 hover:decoration-gilt"
+          aria-expanded={showKeyInput}
+        >
+          {usingOwnKey ? 'Gemini key added' : 'Add a Gemini key for hard-to-read PDFs'}
+        </button>
       </div>
 
-      {/* Error Callout */}
-      {parseErrors.length > 0 && (
-        <div className="p-4 rounded-2xl bg-red-500/15 border border-red-500/30 text-red-200 flex flex-col gap-1.5 text-xs md:text-sm">
-          <div className="flex items-center gap-2 font-bold text-red-400">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>Document Parsing Callouts ({parseErrors.length})</span>
+      {showKeyInput && (
+        <div className="flex flex-col gap-2 border-t border-rule pt-4">
+          <label htmlFor="gemini-key" className={ui.label}>
+            Google AI Studio key
+          </label>
+          <div className="flex items-center gap-3">
+            <input
+              id="gemini-key"
+              type="password"
+              placeholder="AIzaSy…"
+              value={geminiKey}
+              onChange={(e) => handleSaveKey(e.target.value)}
+              className={`${ui.input} py-2 text-sm`}
+            />
+            {keySaved && <span className="shrink-0 text-sm text-psalm">Saved</span>}
           </div>
-          <ul className="list-disc list-inside mt-1 space-y-0.5 text-xs text-red-300">
-            {parseErrors.slice(0, 5).map((err, i) => (
-              <li key={i}>{err}</li>
-            ))}
-            {parseErrors.length > 5 && (
-              <li>...and {parseErrors.length - 5} more issues.</li>
-            )}
-          </ul>
+          <p className="text-sm text-faint">
+            Gemini reads PDFs with tables, two columns or unusual fonts. The key is stored in this browser only.
+          </p>
         </div>
       )}
     </div>

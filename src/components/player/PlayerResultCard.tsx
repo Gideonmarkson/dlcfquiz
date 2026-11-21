@@ -1,8 +1,9 @@
 'use client';
 
 import React from 'react';
-import { CheckCircle2, XCircle, Clock, BookOpen, Trophy } from 'lucide-react';
 import { usePlayerStore } from '@/store/usePlayerStore';
+import { OPTION_LETTERS } from '@/lib/ui';
+import { ordinal } from '@/components/player/PlayerStatusHeader';
 
 export const PlayerResultCard: React.FC = () => {
   const result = usePlayerStore((s) => s.result);
@@ -13,88 +14,54 @@ export const PlayerResultCard: React.FC = () => {
 
   const isAnswered = selectedOption !== null;
   const isCorrect = isAnswered && selectedOption === reveal.correctOptionIndex;
-  const points = result?.pointsAwarded ?? (isCorrect ? 500 : 0);
-  const score = result?.cumulativeScore;
+  const points = isCorrect ? result?.pointsAwarded ?? 0 : 0;
   const rank = result?.currentRank;
   const totalPlayers = result?.totalPlayers;
 
+  const headline = isCorrect ? 'Correct' : isAnswered ? 'Not this time' : 'Time ran out';
+
   return (
-    <div className="flex flex-col gap-4 w-full animate-fadeIn">
-      {/* Outcome Banner */}
-      <div
-        className={`p-6 rounded-3xl border-2 flex flex-col items-center text-center gap-2 shadow-2xl ${
-          isCorrect
-            ? 'bg-emerald-950/70 border-emerald-500 text-emerald-100 ring-2 ring-emerald-500/30'
-            : isAnswered
-            ? 'bg-red-950/70 border-red-500 text-red-100 ring-2 ring-red-500/30'
-            : 'bg-slate-800/80 border-slate-700 text-slate-300'
-        }`}
-      >
-        {isCorrect ? (
-          <CheckCircle2 className="w-12 h-12 text-emerald-400 animate-bounce" />
-        ) : isAnswered ? (
-          <XCircle className="w-12 h-12 text-red-400" />
-        ) : (
-          <Clock className="w-12 h-12 text-slate-400" />
-        )}
-
-        <div className="flex flex-col">
-          <span className="text-2xl md:text-3xl font-black">
-            {isCorrect
-              ? `Correct! +${points} pts`
-              : isAnswered
-              ? 'Not Quite! +0 pts'
-              : "Time Expired! +0 pts"}
-          </span>
-          <span className="text-xs md:text-sm text-slate-300 font-medium mt-0.5">
-            {isCorrect
-              ? 'Excellent knowledge of the Scriptures!'
-              : 'Keep your eyes on the fellowship screen to review.'}
-          </span>
-        </div>
+    <section className="flex flex-col gap-8 animate-enter">
+      <div>
+        <p className={`text-sm ${isCorrect ? 'text-psalm' : isAnswered ? 'text-[#f0a49d]' : 'text-muted'}`}>
+          {isAnswered ? `You answered ${OPTION_LETTERS[selectedOption as number]}` : 'No answer sent'}
+        </p>
+        <h1 className="mt-1 font-display text-5xl leading-none">{headline}</h1>
+        <p className="mt-3 text-2xl font-semibold tabular-nums text-gilt">
+          {isCorrect && points > 0 ? `+${points.toLocaleString()} points` : '+0 points'}
+        </p>
       </div>
 
-      {/* Scripture Verification Card */}
-      <div className="bg-slate-800 border-l-4 border-amber-500 rounded-2xl p-5 shadow-xl flex flex-col gap-1.5">
-        <div className="flex items-center gap-2 text-amber-400 font-bold text-xs uppercase tracking-wider">
-          <BookOpen className="w-4 h-4" />
-          <span>Scripture Reference</span>
-        </div>
-        <div className="text-xl md:text-2xl font-black text-amber-300">
-          {reveal.scriptureRef}
-        </div>
-        {reveal.explanation && (
-          <p className="text-slate-300 text-xs md:text-sm mt-1 leading-relaxed">
-            {reveal.explanation}
-          </p>
-        )}
-      </div>
+      <ScriptureNote reference={reveal.scriptureRef} explanation={reveal.explanation} />
 
-      {/* Live Rank & Total Score Summary */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-md">
-          <div className="flex items-center gap-1.5 text-xs text-slate-400 font-semibold uppercase mb-1">
-            <Trophy className="w-3.5 h-3.5 text-amber-400" />
-            <span>Your Live Rank</span>
-          </div>
-          <span className="text-2xl font-black text-amber-400 tabular-nums">
-            {rank ? `#${rank}` : 'Calculating...'}
-          </span>
-          {totalPlayers ? (
-            <span className="text-[10px] text-slate-500">of {totalPlayers} players</span>
-          ) : null}
-        </div>
-
-        <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-md">
-          <span className="text-xs text-slate-400 font-semibold uppercase mb-1">
-            Total Score
-          </span>
-          <span className="text-2xl font-black text-amber-300 tabular-nums">
-            {score !== undefined ? score.toLocaleString() : '---'}
-          </span>
-          <span className="text-[10px] text-slate-500 uppercase font-bold">points</span>
-        </div>
-      </div>
-    </div>
+      {rank ? (
+        <p className="text-lg text-muted">
+          You’re <span className="text-page tabular-nums">{ordinal(rank)}</span>
+          {totalPlayers ? <span className="tabular-nums"> of {totalPlayers}</span> : null}
+          {result?.cumulativeScore !== undefined ? (
+            <> with <span className="text-page tabular-nums">{result.cumulativeScore.toLocaleString()}</span> points.</>
+          ) : (
+            '.'
+          )}
+        </p>
+      ) : null}
+    </section>
   );
 };
+
+/** The answer's scripture, marked with a ribbon like a bookmarked page. */
+export const ScriptureNote: React.FC<{ reference: string; explanation?: string | null; large?: boolean }> = ({
+  reference,
+  explanation,
+  large = false,
+}) => (
+  <div className="relative border-t border-rule pt-5">
+    <span aria-hidden className={`absolute -top-px left-0 w-3 bg-ribbon [clip-path:polygon(0_0,100%_0,100%_100%,50%_78%,0_100%)] ${large ? 'h-12 w-4' : 'h-9'}`} />
+    <p className={`pl-7 font-display text-gilt ${large ? 'text-4xl md:text-5xl pl-9' : 'text-2xl'}`}>{reference}</p>
+    {explanation && (
+      <p className={`mt-2 max-w-prose leading-relaxed text-page/85 ${large ? 'text-xl md:text-2xl pl-9' : 'pl-7'}`}>
+        {explanation}
+      </p>
+    )}
+  </div>
+);

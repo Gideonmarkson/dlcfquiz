@@ -1,42 +1,82 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens.
+ * The palette borrows from a well-used Bible: an indigo leather cover, gilt page edges,
+ * and the red ribbon marker. Answer colours stay distinct enough to call out across a hall.
+ */
+@theme {
+  --color-ink: #141735;        /* page background */
+  --color-cover: #1c2047;      /* raised surfaces */
+  --color-cover-2: #262b5c;    /* inputs, hover */
+  --color-rule: #383e7c;       /* borders */
+  --color-page: #f1ecdf;       /* primary text */
+  --color-muted: #a6aad0;      /* secondary text */
+  --color-faint: #6f74a6;      /* tertiary text */
+  --color-gilt: #d9b65f;       /* the one accent */
+  --color-gilt-deep: #b8953f;
+  --color-ribbon: #c8463d;     /* wrong / urgent */
+  --color-psalm: #3f9474;      /* correct */
+
+  --color-opt-a: #d9b65f;
+  --color-opt-b: #c8463d;
+  --color-opt-c: #3f9474;
+  --color-opt-d: #6f87e3;
+
+  --font-display: "Gloock", Georgia, "Times New Roman", serif;
+  --font-sans: "Bricolage", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --radius-control: 6px;
+  --radius-tile: 12px;
+}
+
 @layer base {
-  :root {
-    --background: #0F172A;
-    --foreground: #F8FAFC;
+  html {
+    background-color: var(--color-ink);
+    color: var(--color-page);
+    -webkit-tap-highlight-color: transparent;
   }
 
   body {
-    background-color: var(--background);
-    color: var(--foreground);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    min-height: 100vh;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01";
+    min-height: 100dvh;
     overflow-x: hidden;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-gilt);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-gilt);
+    color: var(--color-ink);
   }
 }
 
-/* Tabular Numerals to eliminate horizontal jitter during timer ticks and score counts */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
-/* GPU-Accelerated Floating HYPE Emoji Animation */
+/* Hype reactions drifting up the projector */
 @keyframes floatUp {
-  0% {
-    transform: translateY(20px) scale(0.7);
-    opacity: 0;
-  }
-  15% {
-    opacity: 1;
-    transform: translateY(0) scale(1.1);
-  }
-  80% {
-    opacity: 0.9;
-  }
-  100% {
-    transform: translateY(-280px) scale(0.9);
-    opacity: 0;
-  }
+  0% { transform: translateY(16px); opacity: 0; }
+  12% { transform: translateY(0); opacity: 1; }
+  80% { opacity: 0.9; }
+  100% { transform: translateY(-260px); opacity: 0; }
 }
 
 .animate-float-up {
@@ -44,66 +84,40 @@
   will-change: transform, opacity;
 }
 
-/* Podium Rise Animation */
+/* Podium columns rising — the one staged moment in the app */
 @keyframes podiumRise {
-  0% {
-    transform: translateY(100%);
-    opacity: 0;
-  }
-  100% {
-    transform: translateY(0);
-    opacity: 1;
-  }
+  from { transform: translateY(40%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
 }
 
 .animate-podium-rise {
-  animation: podiumRise 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: podiumRise 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* Urgent Timer Punch / Scale Pop Animation */
-@keyframes timerPop {
-  0% {
-    transform: scale(1.18);
+/* Swap between quiz states */
+@keyframes enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-enter {
+  animation: enter 0.25s ease-out both;
+}
+
+/* Timer bar: width set once per question, CSS does the shrinking (no per-frame React renders) */
+.timer-fill {
+  transform-origin: left center;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-up,
+  .animate-podium-rise,
+  .animate-enter {
+    animation-duration: 0.01ms !important;
   }
-  100% {
-    transform: scale(1);
-  }
 }
 
-.animate-timer-pop {
-  animation: timerPop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.animate-fadeIn {
-  animation: fadeIn 0.3s ease-out forwards;
-}
-
-/* Custom scrollbars for dark slate surface */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: #0F172A;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 9999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #475569;
-}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-rule); border-radius: 8px; }

@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, use } from 'react';
 import Link from 'next/link';
-import { Volume2, VolumeX, Maximize, Minimize, AlertTriangle, ArrowLeft, Home } from 'lucide-react';
+import { Volume2, VolumeX, Maximize, Minimize } from 'lucide-react';
+import { ui } from '@/lib/ui';
 import { useHostStore } from '@/store/useHostStore';
 import { HostLobbyView } from '@/components/host/HostLobbyView';
 import { HostQuestionActiveView } from '@/components/host/HostQuestionActiveView';
@@ -54,9 +55,9 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
         });
         if (!res.ok) {
           if (res.status === 401) {
-            setErrorMessage('Unauthorized host session. Please create or resume from host setup.');
+            setErrorMessage('This browser isn’t the host for that game. Open it from the device that created it.');
           } else {
-            setErrorMessage('Quiz room not found.');
+            setErrorMessage('No game with that PIN.');
           }
           setIsLoading(false);
           return;
@@ -82,7 +83,7 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
       } catch (err) {
         console.error('Failed to load host room:', err);
         if (isMounted) {
-          setErrorMessage('Failed to connect to room server.');
+          setErrorMessage('Can’t reach the server. Check the internet connection and reload.');
           setIsLoading(false);
         }
       }
@@ -114,7 +115,11 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
   };
 
   // State Transition Dispatcher
+  const transitionInFlight = React.useRef(false);
+
   const handleTransition = async (targetState: string, qIdx?: number) => {
+    if (transitionInFlight.current) return;
+    transitionInFlight.current = true;
     setIsTransitioning(true);
     try {
       const res = await fetch(`/api/host/rooms/${pin}/transition`, {
@@ -144,31 +149,25 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
     } catch (err) {
       console.error('Failed to transition state', err);
     } finally {
+      transitionInFlight.current = false;
       setIsTransitioning(false);
     }
   };
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center gap-3">
-        <div className="w-12 h-12 border-4 border-amber-400 border-t-transparent rounded-full animate-spin" />
-        <span className="text-sm font-semibold text-slate-300">
-          Loading Fellowship Projection Console...
-        </span>
+      <div className="min-h-[100dvh] flex items-center justify-center">
+        <p className="text-lg text-muted">Loading the game…</p>
       </div>
     );
   }
 
   if (errorMessage) {
     return (
-      <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center p-6 text-center gap-4">
-        <AlertTriangle className="w-12 h-12 text-red-400" />
-        <h2 className="text-2xl font-bold text-slate-100">{errorMessage}</h2>
-        <a
-          href="/host"
-          className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-sm"
-        >
-          Return to Host Setup
+      <div className="min-h-[100dvh] flex flex-col justify-center gap-6 px-8 max-w-2xl mx-auto">
+        <h1 className="font-display text-4xl leading-tight">{errorMessage}</h1>
+        <a href="/host" className={`${ui.btnPrimary} self-start`}>
+          Back to setup
         </a>
       </div>
     );
@@ -177,105 +176,73 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
   const isLastQuestion = currentQuestionIndex >= questions.length - 1;
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col justify-between p-4 sm:p-6 md:p-8 select-none relative overflow-x-hidden">
-      {/* Realtime Floating Emojis Layer */}
+    <div className="min-h-[100dvh] flex flex-col px-5 sm:px-8 lg:px-12 select-none">
       <FloatingHypeOverlay />
-
-      {/* Connection Toast if disconnected */}
       <ConnectionStatusToast isConnected={isConnected} />
 
-      {/* Top Console Bar */}
-      <header className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4 z-20">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/host"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition border border-slate-700 shadow-sm"
-            title="Exit to Host Setup"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Setup / Back</span>
+      <header className="flex items-center justify-between gap-4 border-b border-rule py-3">
+        <div className="flex items-center gap-5">
+          <Link href="/host" className="font-display text-xl text-page hover:text-gilt transition-colors">
+            Bible Quiz
           </Link>
-          <div className="w-3 h-3 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-          <span className="font-extrabold text-sm tracking-wider uppercase text-slate-300 hidden md:inline">
-            DLCF AFIT Projector Console
-          </span>
-          <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/40">
-            PIN: {pin}
-          </span>
+          {status !== 'LOBBY' && (
+            <span className="text-muted">
+              Join with PIN <span className="font-semibold tabular-nums tracking-wider text-page">{pin}</span>
+            </span>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Audio Chimes Toggle */}
+        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={toggleSound}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-            title={soundOn ? 'Sound On' : 'Sound Muted'}
+            className={ui.btnQuiet}
+            aria-label={soundOn ? 'Mute sound' : 'Turn sound on'}
           >
-            {soundOn ? <Volume2 className="w-5 h-5 text-amber-400" /> : <VolumeX className="w-5 h-5 text-slate-500" />}
+            {soundOn ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
           </button>
-
-          {/* Fullscreen Projector Toggle */}
           <button
             type="button"
             onClick={toggleFullscreen}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-            title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen (1080p Projector Mode)'}
+            className={ui.btnQuiet}
+            aria-label={isFullscreen ? 'Exit full screen' : 'Full screen'}
           >
-            {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+            {isFullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
           </button>
         </div>
       </header>
 
-      {/* Main Stage View Router */}
-      <main className="flex-1 flex flex-col justify-center items-center z-10 w-full">
+      <main className="flex-1 flex flex-col justify-center w-full py-6">
         {status === 'LOBBY' && (
-          <HostLobbyView
-            onStartQuiz={() => handleTransition('QUESTION_ACTIVE', 0)}
-            isStarting={isTransitioning}
-          />
+          <HostLobbyView onStartQuiz={() => handleTransition('QUESTION_ACTIVE', 0)} isStarting={isTransitioning} />
         )}
 
         {status === 'QUESTION_ACTIVE' && (
-          <HostQuestionActiveView
-            onEndEarly={() => handleTransition('ANSWER_REVEALED')}
-          />
+          <HostQuestionActiveView onEndEarly={() => handleTransition('ANSWER_REVEALED')} isBusy={isTransitioning} />
         )}
 
         {status === 'ANSWER_REVEALED' && (
           <HostAnswerRevealedView
             isLastQuestion={isLastQuestion}
-            onShowLeaderboard={() => {
-              if (isLastQuestion) {
-                handleTransition('GAME_OVER');
-              } else {
-                handleTransition('LEADERBOARD');
-              }
-            }}
+            isBusy={isTransitioning}
+            onShowLeaderboard={() => handleTransition(isLastQuestion ? 'GAME_OVER' : 'LEADERBOARD')}
           />
         )}
 
         {status === 'LEADERBOARD' && (
           <HostLeaderboardView
             isLastQuestion={isLastQuestion}
-            onNextQuestion={() => {
-              if (isLastQuestion) {
-                handleTransition('GAME_OVER');
-              } else {
-                handleTransition('QUESTION_ACTIVE', currentQuestionIndex + 1);
-              }
-            }}
+            isBusy={isTransitioning}
+            onNextQuestion={() =>
+              isLastQuestion
+                ? handleTransition('GAME_OVER')
+                : handleTransition('QUESTION_ACTIVE', currentQuestionIndex + 1)
+            }
           />
         )}
 
         {status === 'GAME_OVER' && <HostPodiumView />}
       </main>
-
-      {/* Footer Branding Bar */}
-      <footer className="flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-800/80 pt-3 mt-4 z-20">
-        <span>Deeper Life Campus Fellowship • Air Force Institute of Technology Kaduna</span>
-        <span>2 Timothy 2:15 • Speed + Accuracy Scoring</span>
-      </footer>
     </div>
   );
 }

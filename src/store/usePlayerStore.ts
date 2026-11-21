@@ -13,6 +13,7 @@ import {
 } from '@/types/quiz';
 import { getSupabaseBrowser } from '@/lib/supabase/client';
 import { startAdaptivePoll } from '@/lib/adaptivePoll';
+import { playTap, playCorrect, playWrong, playPhoneQuestion } from '@/lib/audio';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
 const STORAGE_KEY = 'dlcf_quiz_session_v1';
@@ -156,6 +157,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
     // Synchronously lock option in UI immediately (0ms feedback)
     set({ selectedOption: optionIndex, isLocked: true, isSubmittingAnswer: true });
+    playTap();
 
     try {
       const res = await fetch('/api/play/answer', {
@@ -392,3 +394,25 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set({ channel: null, isConnected: false, stopPolling: null, realtimeLive: false });
   },
 }));
+
+// Phone sounds: a ping when a question appears, and correct / not-correct at the reveal.
+// Driven by state transitions, so poll and realtime updates never double a sound.
+if (typeof window !== 'undefined') {
+  usePlayerStore.subscribe((state, prev) => {
+    if (!state.playerToken) return;
+
+    const questionId = state.activeQuestion?.id;
+    if (
+      state.roomStatus === 'QUESTION_ACTIVE' &&
+      questionId &&
+      (prev.roomStatus !== 'QUESTION_ACTIVE' || prev.activeQuestion?.id !== questionId)
+    ) {
+      playPhoneQuestion();
+    }
+
+    if (state.roomStatus === 'ANSWER_REVEALED' && state.reveal && prev.roomStatus === 'QUESTION_ACTIVE') {
+      if (state.selectedOption === state.reveal.correctOptionIndex) playCorrect();
+      else playWrong();
+    }
+  });
+}

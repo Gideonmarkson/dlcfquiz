@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { playCountdownTick, playUrgentTick } from '@/lib/audio';
-import { Clock } from 'lucide-react';
 
 interface CountdownTimerProps {
   totalSeconds: number;
@@ -14,6 +13,13 @@ interface CountdownTimerProps {
   showFullScreenLowTimeOverlay?: boolean;
 }
 
+const URGENT_AT_SECONDS = 10;
+
+/**
+ * React only re-renders once per second (when the number changes).
+ * The bar shrinks with a single CSS transition, which stays smooth on low-end phones
+ * instead of re-rendering the whole question 60 times a second.
+ */
 export const CountdownTimer: React.FC<CountdownTimerProps> = ({
   totalSeconds,
   questionEndsAtMs,
@@ -23,104 +29,84 @@ export const CountdownTimer: React.FC<CountdownTimerProps> = ({
   className = '',
   showFullScreenLowTimeOverlay = true,
 }) => {
-  const [remainingMs, setRemainingMs] = useState<number>(() => {
-    const now = Date.now() + clockOffsetMs;
-    return Math.max(0, questionEndsAtMs - now);
-  });
-
-  const lastTickSecRef = useRef<number>(-1);
   const totalMs = totalSeconds * 1000;
+  const getRemainingMs = () => Math.max(0, questionEndsAtMs - (Date.now() + clockOffsetMs));
 
+  const [seconds, setSeconds] = useState(() => Math.ceil(getRemainingMs() / 1000));
+  const barRef = useRef<HTMLDivElement>(null);
+  const onTimeUpRef = useRef(onTimeUp);
+  onTimeUpRef.current = onTimeUp;
+
+  // Start (or restart) the bar animation whenever the deadline changes.
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const remaining = getRemainingMs();
+    bar.style.transition = 'none';
+    bar.style.transform = `scaleX(${totalMs > 0 ? Math.min(1, remaining / totalMs) : 0})`;
+    // Force a reflow so the browser registers the starting width before transitioning.
+    void bar.offsetWidth;
+    bar.style.transition = `transform ${remaining}ms linear`;
+    bar.style.transform = 'scaleX(0)';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionEndsAtMs, clockOffsetMs, totalMs]);
+
+  // Tick the number once per second, aligned to second boundaries.
   useEffect(() => {
-    let animFrame: number;
-    let firedTimeUp = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let lastSec = -1;
+    let fired = false;
 
     const tick = () => {
-      const now = Date.now() + clockOffsetMs;
-      const rem = Math.max(0, questionEndsAtMs - now);
-      setRemainingMs(rem);
+      const remaining = getRemainingMs();
+      const sec = Math.ceil(remaining / 1000);
 
-      const currentSec = Math.ceil(rem / 1000);
-      if (isHost && currentSec !== lastTickSecRef.current && currentSec > 0) {
-        lastTickSecRef.current = currentSec;
-        if (currentSec <= 10) {
-          playUrgentTick();
-        } else {
-          playCountdownTick();
+      if (sec !== lastSec) {
+        lastSec = sec;
+        setSeconds(sec);
+        if (isHost && sec > 0) {
+          if (sec <= URGENT_AT_SECONDS) playUrgentTick();
+          else playCountdownTick();
         }
       }
 
-      if (rem <= 0) {
-        if (!firedTimeUp && onTimeUp) {
-          firedTimeUp = true;
-          onTimeUp();
+      if (remaining <= 0) {
+        if (!fired) {
+          fired = true;
+          onTimeUpRef.current?.();
         }
-      } else {
-        animFrame = requestAnimationFrame(tick);
+        return;
       }
+      timer = setTimeout(tick, (remaining % 1000) + 15);
     };
 
-    animFrame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animFrame);
-  }, [questionEndsAtMs, clockOffsetMs, totalSeconds, isHost, onTimeUp]);
+    tick();
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionEndsAtMs, clockOffsetMs, isHost]);
 
-  const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
-  const progressRatio = totalMs > 0 ? Math.min(1, Math.max(0, remainingMs / totalMs)) : 0;
-  const isUrgent = remainingSeconds <= 10;
-  const isLowTimeState = remainingSeconds <= 10 && remainingSeconds > 0;
+  const isUrgent = seconds > 0 && seconds <= URGENT_AT_SECONDS;
 
   return (
     <>
-      {/* Standard Inline Timer Bar */}
-      <div className={`flex flex-col items-center gap-1.5 w-full ${className}`}>
-        <div className="flex items-center justify-between w-full px-1">
-          <span
-            className={`text-xs uppercase tracking-wider font-semibold transition-colors duration-200 ${
-              isUrgent ? 'text-red-400 font-bold flex items-center gap-1' : 'text-slate-400'
-            }`}
-          >
-            {isUrgent ? (
-              <>
-                <Clock className="w-3.5 h-3.5 animate-spin" />
-                <span>Low Time Alert</span>
-              </>
-            ) : (
-              'Time Remaining'
-            )}
-          </span>
-          <span
-            className={`tabular-nums font-mono font-bold transition-all duration-200 ${
-              isUrgent
-                ? 'text-red-400 text-xl md:text-2xl animate-pulse font-black'
-                : 'text-amber-400 text-lg md:text-xl'
-            }`}
-          >
-            {remainingSeconds}s
-          </span>
-        </div>
-
-        {/* Progress Track */}
-        <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden border border-slate-700/60 shadow-inner">
+      <div className={`flex w-full items-center gap-3 ${className}`} role="timer" aria-label={`${seconds} seconds left`}>
+        <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-cover-2">
           <div
-            className={`h-full transition-all duration-100 ease-linear rounded-full ${
-              isUrgent
-                ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.8)]'
-                : 'bg-gradient-to-r from-amber-500 to-yellow-400'
-            }`}
-            style={{ width: `${progressRatio * 100}%` }}
+            ref={barRef}
+            className={`timer-fill absolute inset-0 rounded-full transition-colors ${isUrgent ? 'bg-ribbon' : 'bg-gilt'}`}
           />
         </div>
+        <span
+          className={`w-[3ch] text-right font-semibold tabular-nums ${
+            isHost ? 'text-3xl' : 'text-xl'
+          } ${isUrgent ? 'text-[#f0a49d]' : 'text-page'}`}
+        >
+          {seconds}
+        </span>
       </div>
 
-      {/* Dramatic Low Time Ambient Edge Ring (<= 10s) - NEVER blocks any option or text */}
-      {showFullScreenLowTimeOverlay && isLowTimeState && (
-        <div
-          aria-live="assertive"
-          className="fixed inset-0 z-10 pointer-events-none overflow-hidden"
-        >
-          {/* Subtle Red Edge Ring only: all options A, B, C, D remain 100% visible and unblocked */}
-          <div className="absolute inset-0 pointer-events-none ring-4 ring-inset ring-red-500/30 transition-opacity duration-300" />
-        </div>
+      {showFullScreenLowTimeOverlay && isUrgent && (
+        <div aria-hidden className="pointer-events-none fixed inset-0 z-10 ring-[6px] ring-inset ring-ribbon/40" />
       )}
     </>
   );

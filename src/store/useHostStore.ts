@@ -13,7 +13,8 @@ import {
   LobbyUpdatePayload,
   HypePayload,
 } from '@/types/quiz';
-import { supabaseBrowser } from '@/lib/supabase/client';
+import { getSupabaseBrowser } from '@/lib/supabase/client';
+import { startAdaptivePoll } from '@/lib/adaptivePoll';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { playRevealChime, playPodiumFanfare } from '@/lib/audio';
 
@@ -49,7 +50,8 @@ interface HostStore {
   isConnected: boolean;
   soundEnabled: boolean;
   channel: RealtimeChannel | null;
-  pollTimer: ReturnType<typeof setInterval> | null;
+  stopPolling: (() => void) | null;
+  realtimeLive: boolean;
 
   setRoomState: (state: Partial<HostStore>) => void;
   addHype: (emoji: HypeEmoji, level: AcademicLevel) => void;
@@ -75,7 +77,8 @@ export const useHostStore = create<HostStore>((set, get) => ({
   isConnected: false,
   soundEnabled: true,
   channel: null,
-  pollTimer: null,
+  stopPolling: null,
+  realtimeLive: false,
 
   setRoomState: (newState) => set((prev) => ({ ...prev, ...newState })),
 
@@ -107,137 +110,131 @@ export const useHostStore = create<HostStore>((set, get) => ({
   },
 
   subscribeToRoom: (pin: string) => {
-    const current = get();
-    if (current.pollTimer) {
-      clearInterval(current.pollTimer);
-    }
-    if (current.channel) {
-      current.channel.unsubscribe();
-    }
+    get().cleanup();
 
-    // 1. Automatic Realtime Sync Heartbeat (1.2s interval with host auth)
-    const pollInterval = setInterval(async () => {
-      try {
-        const secret =
-          typeof window !== 'undefined'
-            ? localStorage.getItem(`dlcf_host_secret_${pin}`)
-            : null;
-        const headers: Record<string, string> = {};
-        if (secret) headers['x-host-secret'] = secret;
+    const POLL_FAST_MS = 1000;
+    const POLL_SAFETY_MS = 4000;
+    let consecutiveFailures = 0;
 
-        const res = await fetch(`/api/host/rooms/${pin}`, { headers });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data || !data.room) return;
+    const stopPolling = startAdaptivePoll(
+      async () => {
+        try {
+          const secret = typeof window !== 'undefined' ? localStorage.getItem(`dlcf_host_secret_${pin}`) : null;
+          const headers: Record<string, string> = {};
+          if (secret) headers['x-host-secret'] = secret;
 
-        set((state) => {
-          const nextStatus = data.room.status;
-          if (state.status !== nextStatus) {
-            if (nextStatus === 'ANSWER_REVEALED') {
-              playRevealChime();
-            } else if (nextStatus === 'GAME_OVER') {
-              playPodiumFanfare();
+          const res = await fetch(`/api/host/rooms/${pin}`, { headers, cache: 'no-store' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (!data?.room) return;
+          consecutiveFailures = 0;
+
+          set((state) => {
+            const nextStatus = data.room.status;
+            if (state.status !== nextStatus) {
+              if (nextStatus === 'ANSWER_REVEALED') playRevealChime();
+              else if (nextStatus === 'GAME_OVER') playPodiumFanfare();
             }
-          }
 
-          return {
-            status: nextStatus,
-            currentQuestionIndex: data.room.currentQuestionIndex,
-            questionEndsAtMs: data.room.questionEndsAtMs ?? state.questionEndsAtMs,
-            players: data.players ?? state.players,
-            answeredCount: data.answeredCount ?? state.answeredCount,
-            reveal: data.reveal ?? state.reveal,
-            top5: data.top5 ?? state.top5,
-            podium: data.podium ?? state.podium,
-            isConnected: true,
-          };
-        });
-      } catch {
-        // network jitter, silent
-      }
-    }, 1200);
-
-    // 2. Supabase Realtime Broadcast Channel
-    const roomChannel = supabaseBrowser.channel(`room:${pin}`, {
-      config: {
-        broadcast: { ack: false },
-        presence: { key: 'host' },
+            return {
+              status: nextStatus,
+              currentQuestionIndex: data.room.currentQuestionIndex,
+              questionEndsAtMs: data.room.questionEndsAtMs ?? state.questionEndsAtMs,
+              questions: data.questions ?? state.questions,
+              players: data.players ?? state.players,
+              answeredCount: data.answeredCount ?? state.answeredCount,
+              reveal: data.reveal ?? state.reveal,
+              top5: data.top5 ?? state.top5,
+              podium: data.podium ?? state.podium,
+              isConnected: true,
+            };
+          });
+        } catch {
+          consecutiveFailures++;
+          if (consecutiveFailures >= 3 && !get().realtimeLive) set({ isConnected: false });
+        }
       },
-    });
+      () => (get().realtimeLive ? POLL_SAFETY_MS : POLL_FAST_MS),
+    );
 
-    roomChannel
-      .on('broadcast', { event: 'state_change' }, (msg: { payload: StateChangePayload }) => {
-        const payload = msg.payload;
-        set((state) => {
-          if (payload.status === 'ANSWER_REVEALED') {
-            playRevealChime();
-          } else if (payload.status === 'GAME_OVER') {
-            playPodiumFanfare();
-          }
-          return {
-            status: payload.status,
-            currentQuestionIndex: payload.currentQuestionIndex,
-            questionEndsAtMs: payload.questionEndsAtMs ?? null,
-            reveal: payload.reveal ?? null,
-            top5: payload.top5 ?? state.top5,
-            podium: payload.podium ?? state.podium,
-            answeredCount: 0,
-          };
-        });
-      })
-      .on('broadcast', { event: 'timer_sync' }, (msg: { payload: TimerSyncPayload }) => {
-        const payload = msg.payload;
-        set({
-          answeredCount: payload.answeredCount,
-          questionEndsAtMs: payload.questionEndsAtMs,
-        });
-      })
-      .on('broadcast', { event: 'lobby_update' }, (msg: { payload: LobbyUpdatePayload }) => {
-        const payload = msg.payload;
-        set((state) => {
-          if (payload.action === 'join') {
-            const exists = state.players.some((p) => p.id === payload.player.id);
-            if (exists) return state;
-            return {
-              players: [
-                ...state.players,
-                {
-                  id: payload.player.id,
-                  nickname: payload.player.nickname,
-                  academicLevel: payload.player.academicLevel,
-                  totalScore: 0,
-                  correctCount: 0,
-                  isKicked: false,
-                },
-              ],
-            };
-          } else if (payload.action === 'kick') {
-            return {
-              players: state.players.filter((p) => p.id !== payload.player.id),
-            };
-          }
-          return state;
-        });
-      })
-      .on('broadcast', { event: 'hype' }, (msg: { payload: HypePayload }) => {
-        const payload = msg.payload;
-        get().addHype(payload.e, payload.l);
-      })
-      .subscribe((status) => {
-        set({ isConnected: status === 'SUBSCRIBED' });
+    set({ channel: null, pin, stopPolling });
+
+    getSupabaseBrowser().then((supabase) => {
+      // Bail if Supabase is off, or the page already unsubscribed while the library loaded.
+      if (!supabase || get().stopPolling !== stopPolling) return;
+
+      const roomChannel: RealtimeChannel = supabase.channel(`room:${pin}`, {
+        config: { broadcast: { ack: false }, presence: { key: 'host' } },
       });
 
-    set({ channel: roomChannel, pin, pollTimer: pollInterval });
+      roomChannel
+        .on('broadcast', { event: 'state_change' }, (msg: { payload: StateChangePayload }) => {
+          const payload = msg.payload;
+          set((state) => {
+            if (payload.status !== state.status) {
+              if (payload.status === 'ANSWER_REVEALED') playRevealChime();
+              else if (payload.status === 'GAME_OVER') playPodiumFanfare();
+            }
+            return {
+              status: payload.status,
+              currentQuestionIndex: payload.currentQuestionIndex,
+              questionEndsAtMs: payload.questionEndsAtMs ?? null,
+              reveal: payload.reveal ?? null,
+              top5: payload.top5 ?? state.top5,
+              podium: payload.podium ?? state.podium,
+              answeredCount: payload.status === state.status ? state.answeredCount : 0,
+            };
+          });
+        })
+        .on('broadcast', { event: 'timer_sync' }, (msg: { payload: TimerSyncPayload }) => {
+          const payload = msg.payload;
+          // Answer submissions broadcast questionEndsAtMs: 0 — only take the count from those,
+          // otherwise the host timer would jump to zero and end the question early.
+          set((state) => ({
+            answeredCount: Math.max(state.answeredCount, payload.answeredCount ?? 0),
+            questionEndsAtMs: payload.questionEndsAtMs ? payload.questionEndsAtMs : state.questionEndsAtMs,
+          }));
+        })
+        .on('broadcast', { event: 'lobby_update' }, (msg: { payload: LobbyUpdatePayload }) => {
+          const payload = msg.payload;
+          set((state) => {
+            if (payload.action === 'join') {
+              if (state.players.some((p) => p.id === payload.player.id)) return state;
+              return {
+                players: [
+                  ...state.players,
+                  {
+                    id: payload.player.id,
+                    nickname: payload.player.nickname,
+                    academicLevel: payload.player.academicLevel,
+                    totalScore: 0,
+                    correctCount: 0,
+                    isKicked: false,
+                  },
+                ],
+              };
+            }
+            if (payload.action === 'kick') {
+              return { players: state.players.filter((p) => p.id !== payload.player.id) };
+            }
+            return state;
+          });
+        })
+        .on('broadcast', { event: 'hype' }, (msg: { payload: HypePayload }) => {
+          get().addHype(msg.payload.e, msg.payload.l);
+        })
+        .subscribe((status) => {
+          const live = status === 'SUBSCRIBED';
+          set({ realtimeLive: live, ...(live ? { isConnected: true } : {}) });
+        });
+      set({ channel: roomChannel });
+    });
   },
 
   cleanup: () => {
     const current = get();
-    if (current.pollTimer) {
-      clearInterval(current.pollTimer);
-    }
-    if (current.channel) {
-      current.channel.unsubscribe();
-    }
-    set({ channel: null, isConnected: false, pollTimer: null });
+    current.stopPolling?.();
+    current.channel?.unsubscribe();
+    set({ channel: null, isConnected: false, stopPolling: null, realtimeLive: false });
   },
 }));

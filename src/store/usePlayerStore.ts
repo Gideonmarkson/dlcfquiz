@@ -11,7 +11,8 @@ import {
   StateChangePayload,
   TimerSyncPayload,
 } from '@/types/quiz';
-import { supabaseBrowser } from '@/lib/supabase/client';
+import { getSupabaseBrowser } from '@/lib/supabase/client';
+import { startAdaptivePoll } from '@/lib/adaptivePoll';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
 const STORAGE_KEY = 'dlcf_quiz_session_v1';
@@ -44,7 +45,8 @@ interface PlayerStore {
   isConnected: boolean;
   isReconnecting: boolean;
   channel: RealtimeChannel | null;
-  pollTimer: ReturnType<typeof setInterval> | null;
+  stopPolling: (() => void) | null;
+  realtimeLive: boolean;
   lastHypeTime: number;
   hypeCountWindow: number[];
 
@@ -80,7 +82,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   isConnected: false,
   isReconnecting: false,
   channel: null,
-  pollTimer: null,
+  stopPolling: null,
+  realtimeLive: false,
   lastHypeTime: 0,
   hypeCountWindow: [],
 
@@ -242,148 +245,150 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   subscribeToRoom: (pin: string) => {
-    const current = get();
-    if (current.pollTimer) {
-      clearInterval(current.pollTimer);
-    }
-    if (current.channel) {
-      current.channel.unsubscribe();
-    }
+    get().cleanup();
 
-    // 1. Adaptive Realtime Sync Heartbeat (1.5s interval with overlap guard)
-    // Supports 200+ simultaneous phones with zero lag and instant state updates
-    let isFetching = false;
-    const pollInterval = setInterval(async () => {
-      const { playerToken } = get();
-      if (!playerToken || isFetching) return;
+    // How often to poll: fast when polling is the only source of updates,
+    // slow when the realtime channel is pushing changes and polling is just a safety net.
+    const POLL_FAST_MS = 1200;
+    const POLL_SAFETY_MS = 5000;
+    let consecutiveFailures = 0;
+    let resultFetchedFor: string | null = null;
 
-      isFetching = true;
-      try {
-        const res = await fetch(`/api/play/session?pin=${pin}`, {
-          headers: {
-            'X-Player-Token': playerToken,
-          },
-        });
-        if (!res.ok) return;
+    const applySnapshot = (data: {
+      roomSnapshot: {
+        status: RoomStatus;
+        currentQuestionIndex: number;
+        serverNowMs: number;
+        questionEndsAtMs: number | null;
+      };
+      activeQuestion: PublicQuestionDTO | null;
+      lockedOptionForActiveQuestion: number | null;
+      reveal: RevealedAnswerDTO | null;
+      player?: { totalScore: number; currentRank: number; totalPlayers: number };
+      myResult?: { isCorrect: boolean; pointsAwarded: number } | null;
+    }) => {
+      const offset = data.roomSnapshot.serverNowMs - Date.now();
+      const nextStatus = data.roomSnapshot.status;
+      const nextQIdx = data.roomSnapshot.currentQuestionIndex;
 
-        const data = await res.json();
-        if (!data || !data.roomSnapshot) return;
+      set((prev) => {
+        const isNewQuestion = nextStatus === 'QUESTION_ACTIVE' && nextQIdx !== prev.currentQuestionIndex;
+        const selectedOpt = isNewQuestion ? null : (data.lockedOptionForActiveQuestion ?? prev.selectedOption);
 
-        const serverNow = data.roomSnapshot.serverNowMs;
-        const localNow = Date.now();
-        const offset = serverNow - localNow;
-        const nextStatus = data.roomSnapshot.status;
-        const nextQIdx = data.roomSnapshot.currentQuestionIndex;
-
-        set((prev) => {
-          const isNewQuestion =
-            nextStatus === 'QUESTION_ACTIVE' &&
-            nextQIdx !== prev.currentQuestionIndex;
-
-          const resetSelection = isNewQuestion
-            ? { selectedOption: null, isLocked: false, result: null }
-            : {};
-
-          const selectedOpt = isNewQuestion
-            ? null
-            : (data.lockedOptionForActiveQuestion ?? prev.selectedOption);
-
-          return {
-            ...resetSelection,
-            roomStatus: nextStatus,
-            currentQuestionIndex: nextQIdx,
-            activeQuestion: data.activeQuestion ?? prev.activeQuestion,
-            questionEndsAtMs: data.roomSnapshot.questionEndsAtMs ?? prev.questionEndsAtMs,
-            reveal: data.reveal ?? prev.reveal,
-            clockOffsetMs: offset,
-            selectedOption: selectedOpt,
-            isLocked: isNewQuestion ? false : (selectedOpt !== null ? true : prev.isLocked),
-            isConnected: true,
-            isReconnecting: false,
+        // Personal result now arrives inside the session payload, so no extra request at reveal time.
+        let result = isNewQuestion ? null : prev.result;
+        if (data.player) {
+          result = {
+            isCorrect: data.myResult?.isCorrect ?? result?.isCorrect ?? false,
+            pointsAwarded: data.myResult?.pointsAwarded ?? result?.pointsAwarded ?? 0,
+            cumulativeScore: data.player.totalScore,
+            currentRank: data.player.currentRank,
+            totalPlayers: data.player.totalPlayers,
           };
-        });
-
-        // Automatically fetch personal result when revealed if not yet fetched
-        if (nextStatus === 'ANSWER_REVEALED' && data.reveal?.questionId && !get().result) {
-          get().fetchPersonalResult(pin, data.reveal.questionId);
         }
-      } catch {
-        // network jitter, silent
-      } finally {
-        isFetching = false;
-      }
-    }, 1500);
 
-    // 2. Supabase Realtime Broadcast Channel
-    const roomChannel = supabaseBrowser.channel(`room:${pin}`, {
-      config: {
-        broadcast: { ack: false },
-      },
-    });
-
-    roomChannel
-      .on('broadcast', { event: 'state_change' }, (msg: { payload: StateChangePayload }) => {
-        const payload = msg.payload;
-        const serverNow = payload.serverNowMs;
-        const localNow = Date.now();
-        const offset = serverNow - localNow;
-
-        set((prev) => {
-          const isNewQuestion =
-            payload.status === 'QUESTION_ACTIVE' &&
-            payload.currentQuestionIndex !== prev.currentQuestionIndex;
-
-          const resetSelection = isNewQuestion
-            ? { selectedOption: null, isLocked: false, result: null }
-            : {};
-
-          return {
-            ...resetSelection,
-            roomStatus: payload.status,
-            currentQuestionIndex: payload.currentQuestionIndex,
-            activeQuestion: payload.question ?? prev.activeQuestion,
-            questionEndsAtMs: payload.questionEndsAtMs ?? null,
-            reveal: payload.reveal ?? null,
-            clockOffsetMs: offset,
-          };
-        });
-
-        // If newly revealed, jitter fetch personal result within 0-300ms
-        if (payload.status === 'ANSWER_REVEALED' && payload.reveal?.questionId) {
-          const jitter = Math.floor(Math.random() * 300);
-          setTimeout(() => {
-            get().fetchPersonalResult(pin, payload.reveal!.questionId);
-          }, jitter);
-        }
-      })
-      .on('broadcast', { event: 'timer_sync' }, (msg: { payload: TimerSyncPayload }) => {
-        const payload = msg.payload;
-        const serverNow = payload.serverNowMs;
-        const localNow = Date.now();
-        const offset = serverNow - localNow;
-        set({
-          questionEndsAtMs: payload.questionEndsAtMs,
+        return {
+          roomStatus: nextStatus,
+          currentQuestionIndex: nextQIdx,
+          activeQuestion: data.activeQuestion ?? (isNewQuestion ? null : prev.activeQuestion),
+          questionEndsAtMs: data.roomSnapshot.questionEndsAtMs ?? prev.questionEndsAtMs,
+          reveal: data.reveal ?? (nextStatus === 'ANSWER_REVEALED' ? prev.reveal : null),
           clockOffsetMs: offset,
-        });
-      })
-      .subscribe((status) => {
-        set({
-          isConnected: status === 'SUBSCRIBED',
-          isReconnecting: status === 'TIMED_OUT' || status === 'CHANNEL_ERROR',
-        });
+          selectedOption: selectedOpt,
+          isLocked: isNewQuestion ? false : selectedOpt !== null ? true : prev.isLocked,
+          result,
+          isConnected: true,
+          isReconnecting: false,
+        };
       });
+    };
 
-    set({ channel: roomChannel, pin, pollTimer: pollInterval });
+    const stopPolling = startAdaptivePoll(
+      async () => {
+        const { playerToken } = get();
+        if (!playerToken) return;
+        try {
+          const res = await fetch(`/api/play/session?pin=${pin}`, {
+            headers: { 'X-Player-Token': playerToken },
+            cache: 'no-store',
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (data?.roomSnapshot) {
+            applySnapshot(data);
+            // Backends that don't include myResult in the session payload: fetch it once per question.
+            const revealedId = data.reveal?.questionId as string | undefined;
+            if (data.roomSnapshot.status === 'ANSWER_REVEALED' && revealedId && data.myResult === undefined && resultFetchedFor !== revealedId) {
+              resultFetchedFor = revealedId;
+              get().fetchPersonalResult(pin, revealedId);
+            }
+          }
+          consecutiveFailures = 0;
+        } catch {
+          consecutiveFailures++;
+          if (consecutiveFailures >= 3 && !get().realtimeLive) {
+            set({ isConnected: false, isReconnecting: true });
+          }
+        }
+      },
+      () => (get().realtimeLive ? POLL_SAFETY_MS : POLL_FAST_MS),
+    );
+
+    // Realtime broadcast channel (only when Supabase is configured)
+    set({ channel: null, pin, stopPolling });
+
+    getSupabaseBrowser().then((supabase) => {
+      // Bail if Supabase is off, or the page already unsubscribed while the library loaded.
+      if (!supabase || get().stopPolling !== stopPolling) return;
+
+      const roomChannel: RealtimeChannel = supabase.channel(`room:${pin}`, { config: { broadcast: { ack: false } } });
+
+      roomChannel
+        .on('broadcast', { event: 'state_change' }, (msg: { payload: StateChangePayload }) => {
+          const payload = msg.payload;
+          const offset = payload.serverNowMs - Date.now();
+
+          set((prev) => {
+            const isNewQuestion =
+              payload.status === 'QUESTION_ACTIVE' && payload.currentQuestionIndex !== prev.currentQuestionIndex;
+
+            return {
+              ...(isNewQuestion ? { selectedOption: null, isLocked: false } : {}),
+              roomStatus: payload.status,
+              currentQuestionIndex: payload.currentQuestionIndex,
+              activeQuestion: payload.question ?? prev.activeQuestion,
+              questionEndsAtMs: payload.questionEndsAtMs ?? null,
+              reveal: payload.reveal ?? null,
+              clockOffsetMs: offset,
+            };
+          });
+
+          // Spread the 200 result requests over ~400ms so they don't all land at once.
+          if (payload.status === 'ANSWER_REVEALED' && payload.reveal?.questionId) {
+            const questionId = payload.reveal.questionId;
+            setTimeout(() => get().fetchPersonalResult(pin, questionId), Math.random() * 400);
+          }
+        })
+        .on('broadcast', { event: 'timer_sync' }, (msg: { payload: TimerSyncPayload }) => {
+          const payload = msg.payload;
+          if (!payload.questionEndsAtMs) return;
+          set({
+            questionEndsAtMs: payload.questionEndsAtMs,
+            clockOffsetMs: payload.serverNowMs - Date.now(),
+          });
+        })
+        .subscribe((status) => {
+          const live = status === 'SUBSCRIBED';
+          set({ realtimeLive: live, ...(live ? { isConnected: true, isReconnecting: false } : {}) });
+        });
+      set({ channel: roomChannel });
+    });
   },
 
   cleanup: () => {
     const current = get();
-    if (current.pollTimer) {
-      clearInterval(current.pollTimer);
-    }
-    if (current.channel) {
-      current.channel.unsubscribe();
-    }
-    set({ channel: null, isConnected: false, pollTimer: null });
+    current.stopPolling?.();
+    current.channel?.unsubscribe();
+    set({ channel: null, isConnected: false, stopPolling: null, realtimeLive: false });
   },
 }));

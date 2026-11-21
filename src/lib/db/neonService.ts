@@ -1,4 +1,4 @@
-import { neon } from '@neondatabase/serverless';
+import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
 import {
   RoomRecord,
   QuestionRecord,
@@ -32,12 +32,16 @@ export function isNeonAvailable(): boolean {
   return Boolean(url && url.startsWith('postgres') && !url.includes('placeholder'));
 }
 
+let cachedSql: NeonQueryFunction<false, false> | null = null;
+
 function getSql() {
+  if (cachedSql) return cachedSql;
   const url = getDbUrl();
   if (!url) {
     throw new Error('DATABASE_URL is not configured for Neon.');
   }
-  return neon(url);
+  cachedSql = neon(url);
+  return cachedSql;
 }
 
 // In-memory cache for ultra-fast session reads (500ms TTL)
@@ -70,29 +74,24 @@ export async function createRoomInNeon(params: {
   `;
   const room = roomRows[0] as RoomRecord;
 
-  const createdQuestions: QuestionRecord[] = [];
-  for (let idx = 0; idx < params.questions.length; idx++) {
-    const q = params.questions[idx];
-    const qRows = await sql`
-      INSERT INTO public.questions
-      (room_id, order_index, prompt, option_a, option_b, option_c, option_d, correct_option_index, scripture_ref, explanation, time_limit_sec)
-      VALUES (
-        ${room.id},
-        ${idx},
-        ${q.prompt},
-        ${q.options[0]},
-        ${q.options[1]},
-        ${q.options[2]},
-        ${q.options[3]},
-        ${q.correctOptionIndex},
-        ${q.scriptureRef},
-        ${q.explanation || null},
-        ${q.timeLimitSec}
+  // All question inserts go to Neon in a single HTTP request instead of one per question.
+  const results = params.questions.length
+    ? await sql.transaction(
+        params.questions.map(
+          (q, idx) => sql`
+            INSERT INTO public.questions
+            (room_id, order_index, prompt, option_a, option_b, option_c, option_d, correct_option_index, scripture_ref, explanation, time_limit_sec)
+            VALUES (
+              ${room.id}, ${idx}, ${q.prompt},
+              ${q.options[0]}, ${q.options[1]}, ${q.options[2]}, ${q.options[3]},
+              ${q.correctOptionIndex}, ${q.scriptureRef}, ${q.explanation || null}, ${q.timeLimitSec}
+            )
+            RETURNING *
+          `
+        )
       )
-      RETURNING *
-    `;
-    createdQuestions.push(qRows[0] as QuestionRecord);
-  }
+    : [];
+  const createdQuestions = (results as unknown as QuestionRecord[][]).map((rows) => rows[0]);
 
   invalidateRoomCache(params.pin);
   return { room, questions: createdQuestions };
@@ -102,7 +101,7 @@ export async function createRoomInNeon(params: {
 export async function getRoomByPinFromNeon(pin: string): Promise<RoomRecord | null> {
   const sql = getSql();
   const cleanPin = pin.trim();
-  const rows = await sql`SELECT * FROM public.rooms WHERE TRIM(pin) = ${cleanPin} LIMIT 1`;
+  const rows = await sql`SELECT * FROM public.rooms WHERE pin = ${cleanPin}::bpchar LIMIT 1`;
   if (rows.length === 0) return null;
   return rows[0] as RoomRecord;
 }
@@ -135,7 +134,7 @@ export async function joinPlayerInNeon(params: {
   // 1. Get room (match trimmed pin)
   const cleanPin = params.pin.trim();
   const roomRows = await sql`
-    SELECT id, pin, status, current_question_index FROM public.rooms WHERE TRIM(pin) = ${cleanPin}
+    SELECT id, pin, status, current_question_index FROM public.rooms WHERE pin = ${cleanPin}::bpchar
   `;
   if (roomRows.length === 0) {
     return { success: false, error: 'Room PIN not found.', statusCode: 404 };
@@ -241,6 +240,91 @@ export async function submitAnswerInNeon(params: {
   return { accepted: false, errorCode: 'SUBMISSION_FAILED' };
 }
 
+
+// --- Shared helpers ---------------------------------------------------------
+
+function toLeaderboard(players: PlayerRecord[], limit: number): LeaderboardEntryDTO[] {
+  return players.slice(0, limit).map((p, idx) => ({
+    rank: idx + 1,
+    playerId: p.id,
+    nickname: p.nickname,
+    academicLevel: p.academic_level,
+    totalScore: p.total_score,
+    correctCount: p.correct_count,
+  }));
+}
+
+function buildReveal(
+  question: QuestionRecord,
+  answers: { selected_option: number; player_id: string }[],
+  nicknameById?: Map<string, string>
+): RevealedAnswerDTO {
+  const optionCounts: [number, number, number, number] = [0, 0, 0, 0];
+  const optionPlayerNames: [string[], string[], string[], string[]] = [[], [], [], []];
+
+  for (const a of answers) {
+    if (a.selected_option < 0 || a.selected_option > 3) continue;
+    optionCounts[a.selected_option]++;
+    const name = nicknameById?.get(a.player_id);
+    if (name) optionPlayerNames[a.selected_option].push(name);
+  }
+
+  return {
+    questionId: question.id,
+    correctOptionIndex: question.correct_option_index as 0 | 1 | 2 | 3,
+    scriptureRef: question.scripture_ref,
+    explanation: question.explanation,
+    optionCounts,
+    ...(nicknameById ? { optionPlayerNames } : {}),
+    totalAnswered: optionCounts[0] + optionCounts[1] + optionCounts[2] + optionCounts[3],
+  };
+}
+
+/**
+ * Reads everything the host console needs in ONE HTTP request to Neon
+ * (four statements in a single read-only transaction), instead of 4 sequential round trips.
+ */
+async function readRoomBundle(pin: string, includeKicked: boolean) {
+  const sql = getSql();
+  const cleanPin = pin.trim();
+
+  const [roomRows, questionRows, playerRows, answerRows] = await sql.transaction(
+    [
+      sql`SELECT * FROM public.rooms WHERE pin = ${cleanPin}::bpchar`,
+      sql`
+        SELECT q.* FROM public.questions q
+        JOIN public.rooms r ON r.id = q.room_id
+        WHERE r.pin = ${cleanPin}::bpchar
+        ORDER BY q.order_index ASC
+      `,
+      sql`
+        SELECT p.id, p.nickname, p.academic_level, p.total_score, p.correct_count, p.is_kicked
+        FROM public.players p
+        JOIN public.rooms r ON r.id = p.room_id
+        WHERE r.pin = ${cleanPin}::bpchar AND (${includeKicked} OR p.is_kicked = false)
+        ORDER BY p.total_score DESC, p.total_correct_response_ms ASC, p.joined_at ASC
+      `,
+      sql`
+        SELECT a.selected_option, a.player_id
+        FROM public.answers a
+        JOIN public.rooms r ON r.id = a.room_id
+        JOIN public.questions q ON q.id = a.question_id AND q.order_index = r.current_question_index
+        WHERE r.pin = ${cleanPin}::bpchar
+      `,
+    ],
+    { readOnly: true }
+  );
+
+  if (roomRows.length === 0) return null;
+
+  return {
+    room: roomRows[0] as RoomRecord,
+    questions: questionRows as QuestionRecord[],
+    players: playerRows as PlayerRecord[],
+    currentAnswers: answerRows as { selected_option: number; player_id: string }[],
+  };
+}
+
 // --- 6. TRANSITION ROOM STATE ---
 export async function transitionRoomInNeon(params: {
   pin: string;
@@ -260,16 +344,14 @@ export async function transitionRoomInNeon(params: {
 }> {
   const sql = getSql();
 
-  // 1. Fetch room
-  const cleanPin = params.pin.trim();
-  const roomRows = await sql`SELECT * FROM public.rooms WHERE TRIM(pin) = ${cleanPin}`;
-  if (roomRows.length === 0) {
+  // 1. Room, questions, players and current answers in one round trip
+  const bundle = await readRoomBundle(params.pin, false);
+  if (!bundle) {
     return { success: false, error: 'Room not found', statusCode: 404 };
   }
+  const { room, questions: allQuestions, players: allPlayers, currentAnswers } = bundle;
 
-  const room = roomRows[0] as RoomRecord;
-
-  // 2. Verify Host auth if provided
+  // 2. Verify host auth if provided
   if (params.hostSecret || params.recoveryCode) {
     const isSecretValid = params.hostSecret
       ? verifyHostSecret(params.hostSecret, room.host_secret_hash)
@@ -283,22 +365,13 @@ export async function transitionRoomInNeon(params: {
     }
   }
 
-  // 3. Questions & Players
-  const allQuestions = (await sql`
-    SELECT * FROM public.questions WHERE room_id = ${room.id} ORDER BY order_index ASC
-  `) as QuestionRecord[];
   const totalQuestions = allQuestions.length;
-
-  const allPlayers = (await sql`
-    SELECT * FROM public.players WHERE room_id = ${room.id} AND is_kicked = false ORDER BY total_score DESC, total_correct_response_ms ASC, joined_at ASC
-  `) as PlayerRecord[];
-
-  const now = new Date();
-  let updatedRoom = room;
+  const now = new Date().toISOString();
   let publicQuestion: PublicQuestionDTO | undefined;
   let revealedAnswer: RevealedAnswerDTO | undefined;
   let top5: LeaderboardEntryDTO[] | undefined;
   let podium: LeaderboardEntryDTO[] | undefined;
+  let updateRows: Record<string, any>[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   if (params.targetState === 'QUESTION_ACTIVE') {
     const nextQIdx =
@@ -309,16 +382,15 @@ export async function transitionRoomInNeon(params: {
     }
 
     const activeQ = allQuestions[nextQIdx];
-    const updateRows = await sql`
+    updateRows = await sql`
       UPDATE public.rooms
       SET status = 'QUESTION_ACTIVE',
           current_question_index = ${nextQIdx},
-          question_started_at = ${now.toISOString()},
-          updated_at = ${now.toISOString()}
+          question_started_at = ${now},
+          updated_at = ${now}
       WHERE id = ${room.id}
       RETURNING *
     `;
-    updatedRoom = updateRows[0] as RoomRecord;
 
     publicQuestion = {
       id: activeQ.id,
@@ -329,80 +401,31 @@ export async function transitionRoomInNeon(params: {
       timeLimitSec: activeQ.time_limit_sec,
     };
   } else if (params.targetState === 'ANSWER_REVEALED') {
-    const qIdx = room.current_question_index;
-    const activeQ = allQuestions[qIdx];
+    const activeQ = allQuestions[room.current_question_index];
     if (activeQ) {
-      const answers = (await sql`
-        SELECT * FROM public.answers WHERE room_id = ${room.id} AND question_id = ${activeQ.id}
-      `) as AnswerRecord[];
-
-      const optionCounts: [number, number, number, number] = [0, 0, 0, 0];
-      const optionPlayerNames: [string[], string[], string[], string[]] = [[], [], [], []];
-      const playerMap = new Map(allPlayers.map((p) => [p.id, p.nickname]));
-
-      answers.forEach((a) => {
-        if (a.selected_option >= 0 && a.selected_option <= 3) {
-          optionCounts[a.selected_option]++;
-          const name = playerMap.get(a.player_id);
-          if (name) {
-            optionPlayerNames[a.selected_option].push(name);
-          }
-        }
-      });
-
-      const totalAnswered =
-        optionCounts[0] + optionCounts[1] + optionCounts[2] + optionCounts[3];
-
-      revealedAnswer = {
-        questionId: activeQ.id,
-        correctOptionIndex: activeQ.correct_option_index as 0 | 1 | 2 | 3,
-        scriptureRef: activeQ.scripture_ref,
-        explanation: activeQ.explanation,
-        optionCounts,
-        optionPlayerNames,
-        totalAnswered,
-      };
+      const nicknameById = new Map(allPlayers.map((p) => [p.id, p.nickname]));
+      revealedAnswer = buildReveal(activeQ, currentAnswers, nicknameById);
     }
-
-    const updateRows = await sql`
-      UPDATE public.rooms SET status = 'ANSWER_REVEALED', updated_at = ${now.toISOString()} WHERE id = ${room.id} RETURNING *
+    updateRows = await sql`
+      UPDATE public.rooms SET status = 'ANSWER_REVEALED', updated_at = ${now} WHERE id = ${room.id} RETURNING *
     `;
-    updatedRoom = updateRows[0] as RoomRecord;
   } else if (params.targetState === 'LEADERBOARD') {
-    top5 = allPlayers.slice(0, 5).map((p, idx) => ({
-      rank: idx + 1,
-      playerId: p.id,
-      nickname: p.nickname,
-      academicLevel: p.academic_level,
-      totalScore: p.total_score,
-      correctCount: p.correct_count,
-    }));
-
-    const updateRows = await sql`
-      UPDATE public.rooms SET status = 'LEADERBOARD', updated_at = ${now.toISOString()} WHERE id = ${room.id} RETURNING *
+    top5 = toLeaderboard(allPlayers, 5);
+    updateRows = await sql`
+      UPDATE public.rooms SET status = 'LEADERBOARD', updated_at = ${now} WHERE id = ${room.id} RETURNING *
     `;
-    updatedRoom = updateRows[0] as RoomRecord;
   } else if (params.targetState === 'GAME_OVER') {
-    podium = allPlayers.slice(0, 10).map((p, idx) => ({
-      rank: idx + 1,
-      playerId: p.id,
-      nickname: p.nickname,
-      academicLevel: p.academic_level,
-      totalScore: p.total_score,
-      correctCount: p.correct_count,
-    }));
-
-    const updateRows = await sql`
-      UPDATE public.rooms SET status = 'GAME_OVER', updated_at = ${now.toISOString()} WHERE id = ${room.id} RETURNING *
+    podium = toLeaderboard(allPlayers, 10);
+    updateRows = await sql`
+      UPDATE public.rooms SET status = 'GAME_OVER', updated_at = ${now} WHERE id = ${room.id} RETURNING *
     `;
-    updatedRoom = updateRows[0] as RoomRecord;
   }
 
   invalidateRoomCache(params.pin);
 
   return {
     success: true,
-    room: updatedRoom,
+    room: (updateRows[0] as RoomRecord | undefined) ?? room,
     publicQuestion,
     revealedAnswer,
     top5,
@@ -413,89 +436,24 @@ export async function transitionRoomInNeon(params: {
 
 // --- 7. ROOM SNAPSHOT FOR HOST CONSOLE ---
 export async function getHostRoomSnapshotFromNeon(pin: string) {
-  const sql = getSql();
+  const bundle = await readRoomBundle(pin, true);
+  if (!bundle) return null;
+  const { room, questions, players, currentAnswers } = bundle;
 
-  const cleanPin = pin.trim();
-  const roomRows = await sql`SELECT * FROM public.rooms WHERE TRIM(pin) = ${cleanPin}`;
-  if (roomRows.length === 0) return null;
-  const room = roomRows[0] as RoomRecord;
+  const activeQ =
+    room.current_question_index >= 0 ? questions[room.current_question_index] : undefined;
+  const answeredCount = activeQ ? currentAnswers.length : 0;
 
-  const questions = (await sql`
-    SELECT * FROM public.questions WHERE room_id = ${room.id} ORDER BY order_index ASC
-  `) as QuestionRecord[];
-
-  const players = (await sql`
-    SELECT id, nickname, academic_level, total_score, correct_count, is_kicked FROM public.players WHERE room_id = ${room.id} ORDER BY total_score DESC, total_correct_response_ms ASC, joined_at ASC
-  `) as PlayerRecord[];
-
-  let answeredCount = 0;
   let reveal: RevealedAnswerDTO | null = null;
-
-  if (room.current_question_index >= 0 && questions[room.current_question_index]) {
-    const activeQ = questions[room.current_question_index];
-    const answers = (await sql`
-      SELECT * FROM public.answers WHERE room_id = ${room.id} AND question_id = ${activeQ.id}
-    `) as AnswerRecord[];
-    answeredCount = answers.length;
-
-    if (room.status === 'ANSWER_REVEALED') {
-      const optionCounts: [number, number, number, number] = [0, 0, 0, 0];
-      const optionPlayerNames: [string[], string[], string[], string[]] = [[], [], [], []];
-      const playerMap = new Map(players.map((p) => [p.id, p.nickname]));
-
-      answers.forEach((a) => {
-        if (a.selected_option >= 0 && a.selected_option <= 3) {
-          optionCounts[a.selected_option]++;
-          const name = playerMap.get(a.player_id);
-          if (name) {
-            optionPlayerNames[a.selected_option].push(name);
-          }
-        }
-      });
-
-      const totalAnswered =
-        optionCounts[0] + optionCounts[1] + optionCounts[2] + optionCounts[3];
-
-      reveal = {
-        questionId: activeQ.id,
-        correctOptionIndex: activeQ.correct_option_index as 0 | 1 | 2 | 3,
-        scriptureRef: activeQ.scripture_ref,
-        explanation: activeQ.explanation,
-        optionCounts,
-        optionPlayerNames,
-        totalAnswered,
-      };
-    }
+  if (activeQ && room.status === 'ANSWER_REVEALED') {
+    reveal = buildReveal(activeQ, currentAnswers, new Map(players.map((p) => [p.id, p.nickname])));
   }
 
-  const top5: LeaderboardEntryDTO[] = players.slice(0, 5).map((p, idx) => ({
-    rank: idx + 1,
-    playerId: p.id,
-    nickname: p.nickname,
-    academicLevel: p.academic_level,
-    totalScore: p.total_score,
-    correctCount: p.correct_count,
-  }));
-
-  const podium: LeaderboardEntryDTO[] = players.slice(0, 10).map((p, idx) => ({
-    rank: idx + 1,
-    playerId: p.id,
-    nickname: p.nickname,
-    academicLevel: p.academic_level,
-    totalScore: p.total_score,
-    correctCount: p.correct_count,
-  }));
+  const activePlayers = players.filter((p) => !p.is_kicked);
 
   let questionEndsAtMs: number | null = null;
-  if (
-    room.status === 'QUESTION_ACTIVE' &&
-    room.question_started_at &&
-    room.current_question_index >= 0 &&
-    questions[room.current_question_index]
-  ) {
-    questionEndsAtMs =
-      new Date(room.question_started_at).getTime() +
-      questions[room.current_question_index].time_limit_sec * 1000;
+  if (room.status === 'QUESTION_ACTIVE' && room.question_started_at && activeQ) {
+    questionEndsAtMs = new Date(room.question_started_at).getTime() + activeQ.time_limit_sec * 1000;
   }
 
   return {
@@ -529,100 +487,83 @@ export async function getHostRoomSnapshotFromNeon(pin: string) {
     })),
     answeredCount,
     reveal,
-    top5,
-    podium,
+    top5: toLeaderboard(activePlayers, 5),
+    podium: toLeaderboard(activePlayers, 10),
   };
 }
 
-// --- 8. PLAYER SESSION (OPTIMIZED FOR 200 PLAYERS) ---
+// --- 8. PLAYER SESSION ---
+// Polled by every phone in the hall, so it is a single SQL statement: one HTTP round trip.
 export async function getPlayerSessionFromNeon(pin: string, playerToken: string) {
   const sql = getSql();
-
   const cleanPin = pin.trim();
+
   const rows = await sql`
     SELECT
-      r.id as room_id, r.pin, r.status as room_status, r.current_question_index, r.question_started_at,
-      p.id as player_id, p.nickname, p.academic_level, p.total_score, p.is_kicked,
-      (SELECT COUNT(*)::INTEGER FROM public.players WHERE room_id = r.id AND is_kicked = false) as total_players,
-      (SELECT COUNT(*)::INTEGER FROM public.players WHERE room_id = r.id AND is_kicked = false AND total_score > p.total_score) as higher_count
+      r.id AS room_id, r.status AS room_status, r.current_question_index, r.question_started_at,
+      p.id AS player_id, p.nickname, p.academic_level, p.total_score, p.correct_count, p.is_kicked,
+      (SELECT COUNT(*)::int FROM public.players x WHERE x.room_id = r.id AND x.is_kicked = false) AS total_players,
+      (SELECT COUNT(*)::int FROM public.players x
+         WHERE x.room_id = r.id AND x.is_kicked = false AND x.total_score > p.total_score) AS higher_count,
+      (SELECT COUNT(*)::int FROM public.questions x WHERE x.room_id = r.id) AS total_questions,
+      q.id AS q_id, q.prompt, q.option_a, q.option_b, q.option_c, q.option_d, q.time_limit_sec,
+      q.correct_option_index, q.scripture_ref, q.explanation,
+      a.selected_option AS my_option, a.is_correct AS my_is_correct, a.points_awarded AS my_points,
+      CASE WHEN r.status = 'ANSWER_REVEALED' THEN (
+        SELECT ARRAY[
+          COUNT(*) FILTER (WHERE s.selected_option = 0),
+          COUNT(*) FILTER (WHERE s.selected_option = 1),
+          COUNT(*) FILTER (WHERE s.selected_option = 2),
+          COUNT(*) FILTER (WHERE s.selected_option = 3)
+        ]::int[]
+        FROM public.answers s WHERE s.question_id = q.id
+      ) END AS option_counts
     FROM public.rooms r
     JOIN public.players p ON p.room_id = r.id AND p.player_token = ${playerToken}::uuid
-    WHERE TRIM(r.pin) = ${cleanPin}
+    LEFT JOIN public.questions q ON q.room_id = r.id AND q.order_index = r.current_question_index
+    LEFT JOIN public.answers a ON a.question_id = q.id AND a.player_id = p.id
+    WHERE r.pin = ${cleanPin}::bpchar
   `;
 
-  if (rows.length === 0) {
-    return null;
-  }
-
+  if (rows.length === 0) return null;
   const row = rows[0];
-  if (row.is_kicked) return { kicked: true };
+  if (row.is_kicked) return { kicked: true as const };
 
-  const serverNowMs = Date.now();
   let publicQuestion: PublicQuestionDTO | null = null;
   let lockedOptionForActiveQuestion: number | null = null;
   let questionEndsAtMs: number | null = null;
   let reveal: RevealedAnswerDTO | null = null;
+  let myResult: { isCorrect: boolean; pointsAwarded: number } | null = null;
 
-  if (row.current_question_index >= 0) {
-    const qRows = await sql`
-      SELECT * FROM public.questions WHERE room_id = ${row.room_id} AND order_index = ${row.current_question_index}
-    `;
-
-    if (qRows.length > 0) {
-      const activeQ = qRows[0] as QuestionRecord;
-      const countRows = await sql`
-        SELECT COUNT(*)::INTEGER as count FROM public.questions WHERE room_id = ${row.room_id}
-      `;
-      const totalQuestions = countRows[0]?.count || 1;
-
-      if (row.room_status === 'QUESTION_ACTIVE') {
-        publicQuestion = {
-          id: activeQ.id,
-          orderIndex: row.current_question_index,
-          totalQuestions,
-          prompt: activeQ.prompt,
-          options: [activeQ.option_a, activeQ.option_b, activeQ.option_c, activeQ.option_d],
-          timeLimitSec: activeQ.time_limit_sec,
-        };
-
-        if (row.question_started_at) {
-          questionEndsAtMs =
-            new Date(row.question_started_at).getTime() + activeQ.time_limit_sec * 1000;
-        }
-
-        const ansRows = await sql`
-          SELECT selected_option FROM public.answers WHERE question_id = ${activeQ.id} AND player_id = ${row.player_id}
-        `;
-        if (ansRows.length > 0) {
-          lockedOptionForActiveQuestion = ansRows[0].selected_option;
-        }
-      } else if (row.room_status === 'ANSWER_REVEALED') {
-        const ansAllRows = await sql`
-          SELECT selected_option, player_id FROM public.answers WHERE question_id = ${activeQ.id}
-        `;
-        const optionCounts: [number, number, number, number] = [0, 0, 0, 0];
-        ansAllRows.forEach((a) => {
-          if (a.selected_option >= 0 && a.selected_option <= 3) {
-            optionCounts[a.selected_option]++;
-          }
-        });
-
-        const totalAnswered =
-          optionCounts[0] + optionCounts[1] + optionCounts[2] + optionCounts[3];
-
-        reveal = {
-          questionId: activeQ.id,
-          correctOptionIndex: activeQ.correct_option_index as 0 | 1 | 2 | 3,
-          scriptureRef: activeQ.scripture_ref,
-          explanation: activeQ.explanation,
-          optionCounts,
-          totalAnswered,
-        };
-      }
+  if (row.q_id && row.room_status === 'QUESTION_ACTIVE') {
+    publicQuestion = {
+      id: row.q_id,
+      orderIndex: row.current_question_index,
+      totalQuestions: row.total_questions || 1,
+      prompt: row.prompt,
+      options: [row.option_a, row.option_b, row.option_c, row.option_d],
+      timeLimitSec: row.time_limit_sec,
+    };
+    if (row.question_started_at) {
+      questionEndsAtMs = new Date(row.question_started_at).getTime() + row.time_limit_sec * 1000;
     }
+    lockedOptionForActiveQuestion = row.my_option ?? null;
+  } else if (row.q_id && row.room_status === 'ANSWER_REVEALED') {
+    const counts = (row.option_counts as number[] | null) ?? [0, 0, 0, 0];
+    reveal = {
+      questionId: row.q_id,
+      correctOptionIndex: row.correct_option_index as 0 | 1 | 2 | 3,
+      scriptureRef: row.scripture_ref,
+      explanation: row.explanation,
+      optionCounts: [counts[0], counts[1], counts[2], counts[3]],
+      totalAnswered: counts[0] + counts[1] + counts[2] + counts[3],
+    };
+    lockedOptionForActiveQuestion = row.my_option ?? null;
+    myResult = {
+      isCorrect: Boolean(row.my_is_correct),
+      pointsAwarded: row.my_points ?? 0,
+    };
   }
-
-  const currentRank = (row.higher_count || 0) + 1;
 
   return {
     player: {
@@ -630,18 +571,20 @@ export async function getPlayerSessionFromNeon(pin: string, playerToken: string)
       nickname: row.nickname,
       academicLevel: row.academic_level,
       totalScore: row.total_score,
-      currentRank,
+      correctCount: row.correct_count,
+      currentRank: (row.higher_count || 0) + 1,
       totalPlayers: row.total_players || 1,
     },
     roomSnapshot: {
       status: row.room_status as RoomStatus,
       currentQuestionIndex: row.current_question_index,
       questionEndsAtMs,
-      serverNowMs,
+      serverNowMs: Date.now(),
     },
     activeQuestion: publicQuestion,
     lockedOptionForActiveQuestion,
     reveal,
+    myResult,
   };
 }
 
@@ -655,44 +598,28 @@ export async function getPlayerResultFromNeon(
 
   const rows = await sql`
     SELECT
-      r.id as room_id, r.status, r.current_question_index,
-      p.id as player_id, p.total_score,
-      (SELECT COUNT(*)::INTEGER FROM public.players WHERE room_id = r.id AND is_kicked = false) as total_players,
-      (SELECT COUNT(*)::INTEGER FROM public.players WHERE room_id = r.id AND is_kicked = false AND total_score > p.total_score) as higher_count
+      p.total_score,
+      (SELECT COUNT(*)::int FROM public.players x WHERE x.room_id = r.id AND x.is_kicked = false) AS total_players,
+      (SELECT COUNT(*)::int FROM public.players x
+         WHERE x.room_id = r.id AND x.is_kicked = false AND x.total_score > p.total_score) AS higher_count,
+      a.is_correct, a.points_awarded
     FROM public.rooms r
     JOIN public.players p ON p.room_id = r.id AND p.player_token = ${playerToken}::uuid
-    WHERE r.pin = ${pin}
+    LEFT JOIN public.questions q
+      ON q.room_id = r.id
+     AND (q.id = ${questionId ?? null}::uuid OR (${questionId ?? null}::uuid IS NULL AND q.order_index = r.current_question_index))
+    LEFT JOIN public.answers a ON a.question_id = q.id AND a.player_id = p.id
+    WHERE r.pin = ${pin.trim()}::bpchar
   `;
 
   if (rows.length === 0) return null;
   const row = rows[0];
 
-  let targetQuestionId = questionId;
-  if (!targetQuestionId && row.current_question_index >= 0) {
-    const qRows = await sql`
-      SELECT id FROM public.questions WHERE room_id = ${row.room_id} AND order_index = ${row.current_question_index}
-    `;
-    if (qRows.length > 0) targetQuestionId = qRows[0].id;
-  }
-
-  let isCorrect = false;
-  let pointsAwarded = 0;
-  if (targetQuestionId) {
-    const ansRows = await sql`
-      SELECT is_correct, points_awarded FROM public.answers WHERE question_id = ${targetQuestionId} AND player_id = ${row.player_id}
-    `;
-    if (ansRows.length > 0) {
-      isCorrect = ansRows[0].is_correct;
-      pointsAwarded = ansRows[0].points_awarded;
-    }
-  }
-
-  const currentRank = (row.higher_count || 0) + 1;
   return {
-    isCorrect,
-    pointsAwarded,
+    isCorrect: Boolean(row.is_correct),
+    pointsAwarded: row.points_awarded ?? 0,
     cumulativeScore: row.total_score,
-    currentRank,
+    currentRank: (row.higher_count || 0) + 1,
     totalPlayers: row.total_players || 1,
     pointsToNextRank: 0,
   };

@@ -69,6 +69,8 @@ export default function HostSetupPage() {
         body: JSON.stringify({
           title,
           questions,
+          // Optional key saved in the uploader; the server falls back to GEMINI_API_KEY.
+          geminiKey: localStorage.getItem('dlcf_gemini_api_key') || undefined,
         }),
       });
 
@@ -115,8 +117,11 @@ export default function HostSetupPage() {
     }
   };
 
+  const needsNotes = questions.some((q) => !q.explanation || !q.explanation.trim());
   const openButtonLabel = isSubmitting
-    ? 'Opening…'
+    ? needsNotes
+      ? 'Writing answer notes…'
+      : 'Opening…'
     : `Open game with ${questions.length} ${questions.length === 1 ? 'question' : 'questions'}`;
 
   return (

@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { generateWithFallback } from '@/lib/gemini';
 import { QuestionInput } from '@/types/quiz';
 
 /**
@@ -41,7 +41,6 @@ export async function parsePdfWithGemini(
     };
   }
 
-  const ai = new GoogleGenAI({ apiKey });
 
   const totalPages = pageTexts && pageTexts.length > 0 ? pageTexts.length : 1;
 
@@ -117,32 +116,15 @@ Return ONLY a JSON array matching this format:
         : []),
     ];
 
-    // Try Gemini 2.0 Flash (high quality, multimodal, fast), falling back to Gemini 1.5 Flash
-    let response;
-    try {
-      response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: [{ role: 'user', parts: contentParts }],
-        config: {
-          responseMimeType: 'application/json',
-          maxOutputTokens: 8192,
-          temperature: 0.1,
-        },
-      });
-    } catch (modelErr) {
-      console.warn('Gemini 2.0 Flash call failed, attempting fallback to gemini-1.5-flash:', modelErr);
-      response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: [{ role: 'user', parts: contentParts }],
-        config: {
-          responseMimeType: 'application/json',
-          maxOutputTokens: 8192,
-          temperature: 0.1,
-        },
-      });
-    }
-
-    const responseText = response.text?.trim() || '';
+    // Shared helper tries the current Flash alias first, then older names.
+    const responseText = await generateWithFallback(apiKey, {
+      contents: [{ role: 'user', parts: contentParts }],
+      config: {
+        responseMimeType: 'application/json',
+        maxOutputTokens: 8192,
+        temperature: 0.1,
+      },
+    });
     if (!responseText) {
       return { success: false, questions: [], errors: ['Gemini returned an empty response.'] };
     }

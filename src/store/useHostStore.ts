@@ -16,7 +16,7 @@ import {
 import { getSupabaseBrowser } from '@/lib/supabase/client';
 import { startAdaptivePoll } from '@/lib/adaptivePoll';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { playRevealChime, playPodiumFanfare } from '@/lib/audio';
+import { playRevealChime, playPodiumFanfare, playQuestionStart, playStandings, playJoinBlip } from '@/lib/audio';
 
 export interface HostPlayerItem {
   id: string;
@@ -131,10 +131,6 @@ export const useHostStore = create<HostStore>((set, get) => ({
 
           set((state) => {
             const nextStatus = data.room.status;
-            if (state.status !== nextStatus) {
-              if (nextStatus === 'ANSWER_REVEALED') playRevealChime();
-              else if (nextStatus === 'GAME_OVER') playPodiumFanfare();
-            }
 
             return {
               status: nextStatus,
@@ -171,10 +167,6 @@ export const useHostStore = create<HostStore>((set, get) => ({
         .on('broadcast', { event: 'state_change' }, (msg: { payload: StateChangePayload }) => {
           const payload = msg.payload;
           set((state) => {
-            if (payload.status !== state.status) {
-              if (payload.status === 'ANSWER_REVEALED') playRevealChime();
-              else if (payload.status === 'GAME_OVER') playPodiumFanfare();
-            }
             return {
               status: payload.status,
               currentQuestionIndex: payload.currentQuestionIndex,
@@ -238,3 +230,26 @@ export const useHostStore = create<HostStore>((set, get) => ({
     set({ channel: null, isConnected: false, stopPolling: null, realtimeLive: false });
   },
 }));
+
+// One place decides when the projector makes a sound, whichever path (poll, realtime or the
+// host's own button) changed the state — so a change is never played twice or missed.
+if (typeof window !== 'undefined') {
+  useHostStore.subscribe((state, prev) => {
+    if (!state.pin || state.pin !== prev.pin) return; // first load of a room: stay quiet
+
+    const stepChanged =
+      state.status !== prev.status || state.currentQuestionIndex !== prev.currentQuestionIndex;
+    if (stepChanged) {
+      if (state.status === 'QUESTION_ACTIVE') playQuestionStart();
+      else if (state.status === 'ANSWER_REVEALED') playRevealChime();
+      else if (state.status === 'LEADERBOARD') playStandings();
+      else if (state.status === 'GAME_OVER') playPodiumFanfare();
+      return;
+    }
+
+    if (state.status === 'LOBBY') {
+      const count = (list: typeof state.players) => list.filter((p) => !p.isKicked).length;
+      if (count(state.players) > count(prev.players)) playJoinBlip();
+    }
+  });
+}

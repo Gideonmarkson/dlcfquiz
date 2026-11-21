@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { playCountdownTick, playUrgentTick } from '@/lib/audio';
+import { playUrgentTick } from '@/lib/audio';
 
 interface CountdownTimerProps {
   totalSeconds: number;
@@ -64,10 +64,8 @@ export const CountdownTimer: React.FC<CountdownTimerProps> = ({
       if (sec !== lastSec) {
         lastSec = sec;
         setSeconds(sec);
-        if (isHost && sec > 0) {
-          if (sec <= URGENT_AT_SECONDS) playUrgentTick();
-          else playCountdownTick();
-        }
+        // Only the last 5 seconds tick, on the projector only.
+        if (isHost && sec > 0 && sec <= 5) playUrgentTick(sec);
       }
 
       if (remaining <= 0) {

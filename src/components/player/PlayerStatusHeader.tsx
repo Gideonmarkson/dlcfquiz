@@ -1,6 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
+import { Volume2, VolumeX } from 'lucide-react';
+import { isAudioEnabled, setAudioEnabled } from '@/lib/audio';
 import { usePlayerStore } from '@/store/usePlayerStore';
 import { levelLabel } from '@/components/shared/AcademicLevelBadge';
 
@@ -9,6 +11,12 @@ export const PlayerStatusHeader: React.FC = () => {
   const academicLevel = usePlayerStore((s) => s.academicLevel);
   const result = usePlayerStore((s) => s.result);
   const clearSession = usePlayerStore((s) => s.clearSession);
+  const [soundOn, setSoundOn] = useState(() => isAudioEnabled());
+
+  const toggleSound = () => {
+    setAudioEnabled(!soundOn);
+    setSoundOn(!soundOn);
+  };
 
   const score = result?.cumulativeScore ?? 0;
   const rank = result?.currentRank;
@@ -30,7 +38,7 @@ export const PlayerStatusHeader: React.FC = () => {
           <p className="text-xs text-muted">{levelLabel(academicLevel)}</p>
         </div>
 
-        <div className="flex items-center gap-5">
+        <div className="flex items-center gap-4">
           {showRank && (
             <p className="text-right leading-tight">
               <span className={`block text-2xl font-extrabold tabular-nums ${rank === 1 ? 'text-gilt' : 'text-page'}`}>
@@ -43,6 +51,14 @@ export const PlayerStatusHeader: React.FC = () => {
             <span className="block text-2xl font-extrabold tabular-nums text-gilt">{score.toLocaleString()}</span>
             <span className="block text-xs text-muted">points</span>
           </p>
+          <button
+            type="button"
+            onClick={toggleSound}
+            className="-mx-1 p-1 text-faint transition-colors hover:text-page"
+            aria-label={soundOn ? 'Mute sounds' : 'Turn sounds on'}
+          >
+            {soundOn ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
+          </button>
           <button type="button" onClick={handleLeave} className="text-sm text-faint hover:text-page transition-colors">
             Leave
           </button>

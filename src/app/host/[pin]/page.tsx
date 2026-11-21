@@ -29,7 +29,7 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
   const subscribeToRoom = useHostStore((s) => s.subscribeToRoom);
   const cleanup = useHostStore((s) => s.cleanup);
 
-  const [soundOn, setSoundOn] = useState(true);
+  const [soundOn, setSoundOn] = useState(() => isAudioEnabled());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showJoinCode, setShowJoinCode] = useState(false);
   const [isLoading, setIsLoading] = useState(true);

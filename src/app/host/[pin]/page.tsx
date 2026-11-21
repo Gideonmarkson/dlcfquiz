@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, use } from 'react';
 import Link from 'next/link';
-import { Volume2, VolumeX, Maximize, Minimize } from 'lucide-react';
+import { Volume2, VolumeX, Maximize, Minimize, QrCode } from 'lucide-react';
+import { JoinCodeOverlay } from '@/components/host/JoinCode';
 import { ui } from '@/lib/ui';
 import { useHostStore } from '@/store/useHostStore';
 import { HostLobbyView } from '@/components/host/HostLobbyView';
@@ -30,6 +31,7 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
 
   const [soundOn, setSoundOn] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showJoinCode, setShowJoinCode] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -178,6 +180,7 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
   return (
     <div className="min-h-[100dvh] flex flex-col px-5 sm:px-8 lg:px-12 select-none">
       <FloatingHypeOverlay />
+      {showJoinCode && <JoinCodeOverlay pin={pin} onClose={() => setShowJoinCode(false)} />}
       <ConnectionStatusToast isConnected={isConnected} />
 
       <header className="flex items-center justify-between gap-4 border-b border-rule py-3">
@@ -185,10 +188,16 @@ export default function HostRoomPage({ params }: HostRoomPageProps) {
           <Link href="/host" className="font-display text-xl text-page hover:text-gilt transition-colors">
             Bible Quiz
           </Link>
-          {status !== 'LOBBY' && (
-            <span className="text-muted">
+          {status !== 'LOBBY' && status !== 'GAME_OVER' && (
+            <button
+              type="button"
+              onClick={() => setShowJoinCode(true)}
+              className="inline-flex items-center gap-2 rounded-[var(--radius-control)] px-2 py-1 text-muted transition-colors hover:bg-cover-2 hover:text-page"
+              title="Show the QR code for latecomers"
+            >
+              <QrCode className="h-5 w-5" />
               Join with PIN <span className="font-semibold tabular-nums tracking-wider text-page">{pin}</span>
-            </span>
+            </button>
           )}
         </div>
 
